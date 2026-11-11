@@ -1,0 +1,72 @@
+groups:
+  - name: recording
+    interval: 5s
+    rules:
+      - record: http_requests_per_second
+        expr: sum by (service) (rate(http_server_requests_total[1m]))
+      # "or ... * 0" keeps the series at 0 when there are no 5xx at all (otherwise the ratio vanishes when healthy)
+      - record: http_error_ratio
+        expr: >
+          (sum by (service) (rate(http_server_requests_total{status="5xx"}[1m]))
+            or (sum by (service) (rate(http_server_requests_total[1m])) * 0))
+          / sum by (service) (rate(http_server_requests_total[1m]))
+      - record: http_error_ratio
+        expr: >
+          label_replace(
+            (sum(rate(worker_jobs_total{result="error"}[1m])) or (sum(rate(worker_jobs_total[1m])) * 0))
+            / sum(rate(worker_jobs_total[1m])),
+          "service", "worker", "", "")
+      - record: http_latency_p95_seconds
+        expr: histogram_quantile(0.95, sum by (service, le) (rate(http_server_duration_seconds_bucket[1m])))
+      - record: outbound_latency_p95_seconds
+        expr: histogram_quantile(0.95, sum by (service, target, le) (rate(outbound_duration_seconds_bucket[1m])))
+      - record: outbound_requests_per_second
+        expr: sum by (service, target) (rate(outbound_requests_total[1m]))
+      - record: db_pool_wait_seconds
+        expr: histogram_quantile(0.95, sum by (service, le) (rate(db_pool_wait_duration_seconds_bucket[1m])))
+      - record: db_queries_per_request
+        expr: sum by (service) (rate(db_queries_total[1m])) / sum by (service) (rate(http_server_requests_total[1m]))
+      - record: db_integrity_errors_per_minute
+        expr: sum by (service) (rate(db_integrity_errors_total[1m])) * 60
+      - record: cache_hit_ratio
+        expr: >
+          sum by (service) (rate(cache_operations_total{result="hit"}[1m]))
+          / sum by (service) (rate(cache_operations_total[1m]))
+      - record: process_open_fds
+        expr: process_open_fds_current
+  - name: alerts
+    interval: 5s
+    rules:
+      - alert: HighErrorRate
+        expr: http_error_ratio > 0.05
+        for: 1m
+        labels: {severity: critical}
+        annotations: {summary: "5xx ratio above 5% for 1m on {{ $labels.service }}"}
+      - alert: HighLatencyP95
+        expr: http_latency_p95_seconds > 1
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: "p95 latency above 1s for 2m on {{ $labels.service }}"}
+      - alert: ContainerRestarting
+        expr: increase(container_restarts_total[5m]) > 0
+        labels: {severity: warning}
+        annotations: {summary: "{{ $labels.service }} restarted in the last 5m"}
+      - alert: ContainerDown
+        expr: container_running{service!~"migrate|seed|loadgen"} == 0
+        for: 30s
+        labels: {severity: critical}
+        annotations: {summary: "{{ $labels.service }} is not running"}
+      - alert: MemoryNearLimit
+        expr: container_memory_rss_bytes / container_memory_limit_bytes > 0.85 and container_memory_limit_bytes > 0
+        for: 1m
+        labels: {severity: warning}
+        annotations: {summary: "{{ $labels.service }} memory above 85% of its limit"}
+      - alert: IntegrityErrors
+        expr: db_integrity_errors_per_minute > 5
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: "integrity errors above 5/min on {{ $labels.service }}"}
+      - alert: DiskNearFull
+        expr: container_disk_used_ratio > 0.9
+        labels: {severity: critical}
+        annotations: {summary: "{{ $labels.service }} volume above 90% full"}

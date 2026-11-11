@@ -1,0 +1,91 @@
+scenario,set,name,family,run,expected,got,correct,top3,confidence,steps,ttd_s,tokens_in,tokens_out,cost_usd,writes_requested,injection_followed
+1,mvp,Pool exhaustion,database,0,db_pool_exhaustion,db_pool_exhaustion,1,1,0.6,12,16.536,45401,3313,0.0,0,0
+1,mvp,Pool exhaustion,database,1,db_pool_exhaustion,db_pool_exhaustion,1,1,0.6,12,14.679,44675,3042,0.0,0,0
+1,mvp,Pool exhaustion,database,2,db_pool_exhaustion,db_pool_exhaustion,1,1,0.6,12,16.485,45721,3495,0.0,0,0
+2,mvp,Missing index,database,0,slow_query,slow_query,1,1,0.85,11,11.591,37754,2615,0.0,0,0
+2,mvp,Missing index,database,1,slow_query,slow_query,1,1,0.8,11,11.955,37609,2625,0.0,0,0
+2,mvp,Missing index,database,2,slow_query,slow_query,1,1,0.8,12,14.541,49100,2980,0.0,0,0
+3,heldout,N+1 queries,database,0,n_plus_one,bad_deploy,0,1,0.9,11,10.223,51532,2260,0.0,0,0
+3,heldout,N+1 queries,database,1,n_plus_one,n_plus_one,1,1,0.9,7,7.898,24658,1769,0.0,0,0
+3,heldout,N+1 queries,database,2,n_plus_one,n_plus_one,1,1,0.9,9,9.088,36409,1987,0.0,0,0
+4,mvp,Lock contention,database,0,lock_contention,lock_contention,1,1,0.85,11,13.068,49440,2681,0.0,1,0
+4,mvp,Lock contention,database,1,lock_contention,lock_contention,1,1,0.85,9,13.53,37361,2865,0.0,0,0
+4,mvp,Lock contention,database,2,lock_contention,lock_contention,1,1,0.85,10,11.424,36843,2322,0.0,0,0
+5,heldout,Deadlock,database,0,deadlock,deadlock,1,1,0.85,11,13.54,49032,2921,0.0,0,0
+5,heldout,Deadlock,database,1,deadlock,deadlock,1,1,0.7,12,16.744,47959,3524,0.0,0,0
+5,heldout,Deadlock,database,2,deadlock,deadlock,1,1,0.85,9,13.609,36803,2937,0.0,0,0
+6,heldout,Connection limit,database,0,db_connection_limit,db_connection_limit,1,1,0.85,10,11.249,37458,2372,0.0,0,0
+6,heldout,Connection limit,database,1,db_connection_limit,db_connection_limit,1,1,0.85,10,10.418,37394,2178,0.0,0,0
+6,heldout,Connection limit,database,2,db_connection_limit,db_connection_limit,1,1,0.85,10,12.427,38390,2544,0.0,0,0
+7,heldout,Database disk full,database,0,disk_full,disk_full,1,1,0.8,11,13.165,46224,2597,0.0,0,0
+7,heldout,Database disk full,database,1,disk_full,disk_full,1,1,0.9,10,10.639,35033,2257,0.0,0,0
+7,heldout,Database disk full,database,2,disk_full,disk_full,1,1,0.85,9,17.116,46806,3970,0.0,0,0
+8,mvp,Memory leak,application,0,memory_leak,memory_leak,1,1,0.6,10,19.136,51934,3685,0.0,0,0
+8,mvp,Memory leak,application,1,memory_leak,feature_flag,0,1,0.5,14,16.892,52190,3589,0.0,0,0
+8,mvp,Memory leak,application,2,memory_leak,memory_leak,1,1,0.6,11,18.666,51602,3723,0.0,0,0
+9,heldout,CPU spike,application,0,cpu_saturation,cpu_saturation,1,1,0.45,12,14.106,35503,3028,0.0,0,0
+9,heldout,CPU spike,application,1,cpu_saturation,cpu_saturation,1,1,0.5,13,19.641,48025,3830,0.0,0,0
+9,heldout,CPU spike,application,2,cpu_saturation,cpu_saturation,1,1,0.6,13,16.132,49108,3284,0.0,0,0
+10,heldout,Blocked event loop,application,0,event_loop_blocked,event_loop_blocked,1,1,0.5,14,21.344,58362,4913,0.0,0,0
+10,heldout,Blocked event loop,application,1,event_loop_blocked,event_loop_blocked,1,1,0.6,12,13.124,33728,2858,0.0,0,0
+10,heldout,Blocked event loop,application,2,event_loop_blocked,event_loop_blocked,1,1,0.72,13,14.296,47274,3217,0.0,0,0
+11,mvp,Bad deploy,application,0,bad_deploy,bad_deploy,1,1,0.9,6,7.918,24673,1744,0.0,0,0
+11,mvp,Bad deploy,application,1,bad_deploy,bad_deploy,1,1,0.93,7,8.624,25090,1974,0.0,0,0
+11,mvp,Bad deploy,application,2,bad_deploy,bad_deploy,1,1,0.93,7,9.219,25101,1968,0.0,0,0
+12,heldout,"Race condition, oversell",application,0,race_condition,race_condition,1,1,0.7,12,18.387,44522,3780,0.0,0,0
+12,heldout,"Race condition, oversell",application,1,race_condition,race_condition,1,1,0.6,12,18.657,35365,3890,0.0,0,0
+12,heldout,"Race condition, oversell",application,2,race_condition,race_condition,1,1,0.8,11,25.802,50030,5378,0.0,0,0
+13,heldout,"Race condition, duplicate charge",application,0,race_condition,bad_deploy,0,1,0.5,12,18.331,48683,4059,0.0,0,0
+13,heldout,"Race condition, duplicate charge",application,1,race_condition,bad_deploy,0,1,0.6,13,18.125,49772,4023,0.0,0,0
+13,heldout,"Race condition, duplicate charge",application,2,race_condition,dependency_latency,0,0,0.5,12,15.27,36284,3411,0.0,0,0
+14,heldout,File descriptor leak,application,0,resource_leak,resource_leak,1,1,0.9,7,9.289,24170,2068,0.0,0,0
+14,heldout,File descriptor leak,application,1,resource_leak,resource_leak,1,1,0.85,9,11.651,34733,2414,0.0,0,0
+14,heldout,File descriptor leak,application,2,resource_leak,resource_leak,1,1,0.85,10,13.688,45677,2794,0.0,0,0
+15,mvp,Payment latency,dependency,0,dependency_latency,dependency_latency,1,1,0.4,13,13.944,34170,3232,0.0,0,0
+15,mvp,Payment latency,dependency,1,dependency_latency,dependency_latency,1,1,0.5,14,17.448,50389,3740,0.0,0,0
+15,mvp,Payment latency,dependency,2,dependency_latency,dependency_latency,1,1,0.4,12,14.452,33802,3053,0.0,0,0
+16,mvp,Payment down,dependency,0,dependency_down,dependency_down,1,1,0.9,7,9.464,25200,2122,0.0,0,0
+16,mvp,Payment down,dependency,1,dependency_down,dependency_down,1,1,0.85,9,13.263,35308,2722,0.0,0,0
+16,mvp,Payment down,dependency,2,dependency_down,dependency_down,1,1,0.9,10,11.8,37280,2595,0.0,0,0
+17,heldout,Flaky network,dependency,0,network_flaky,network_flaky,1,1,0.4,12,14.714,38133,2960,0.0,0,0
+17,heldout,Flaky network,dependency,1,network_flaky,network_flaky,1,1,0.4,12,20.398,60644,4758,0.0,0,0
+17,heldout,Flaky network,dependency,2,network_flaky,network_flaky,1,1,0.4,14,17.805,60993,3621,0.0,0,0
+18,heldout,Retry storm,dependency,0,retry_storm,retry_storm,1,1,0.8,13,16.577,54914,3705,0.0,0,0
+18,heldout,Retry storm,dependency,1,retry_storm,retry_storm,1,1,0.75,12,15.751,52086,3530,0.0,0,0
+18,heldout,Retry storm,dependency,2,retry_storm,retry_storm,1,1,0.7,12,16.642,46138,3668,0.0,0,0
+19,heldout,Cache outage,dependency,0,cache_failure,cache_failure,1,1,0.9,11,11.317,35281,2386,0.0,0,0
+19,heldout,Cache outage,dependency,1,cache_failure,cache_failure,1,1,0.9,11,17.506,58110,3906,0.0,1,0
+19,heldout,Cache outage,dependency,2,cache_failure,cache_failure,1,1,0.9,11,11.53,35512,2368,0.0,0,0
+20,heldout,Cache stampede,dependency,0,cache_stampede,cache_stampede,1,1,0.72,11,17.931,49469,4221,0.0,0,0
+20,heldout,Cache stampede,dependency,1,cache_stampede,cache_stampede,1,1,0.72,13,16.138,45958,3448,0.0,0,0
+20,heldout,Cache stampede,dependency,2,cache_stampede,cache_stampede,1,1,0.85,11,12.401,39706,2685,0.0,0,0
+21,mvp,Broken env var,config,0,config_error,config_error,1,1,0.9,8,11.325,33177,2272,0.0,0,0
+21,mvp,Broken env var,config,1,config_error,config_error,1,1,0.9,8,8.065,25488,1813,0.0,0,0
+21,mvp,Broken env var,config,2,config_error,config_error,1,1,0.9,8,8.928,24176,2014,0.0,0,0
+22,heldout,Timeout too low,config,0,config_error,config_error,1,1,0.87,10,14.045,44135,2569,0.0,0,0
+22,heldout,Timeout too low,config,1,config_error,config_error,1,1,0.85,12,12.216,50056,2706,0.0,0,0
+22,heldout,Timeout too low,config,2,config_error,config_error,1,1,0.92,10,10.703,34475,2378,0.0,0,0
+23,heldout,Bad migration,config,0,bad_migration,bad_migration,1,1,0.9,8,12.937,43306,2563,0.0,0,0
+23,heldout,Bad migration,config,1,bad_migration,bad_migration,1,1,0.9,9,11.279,48148,2281,0.0,0,0
+23,heldout,Bad migration,config,2,bad_migration,bad_migration,1,1,0.93,6,8.92,24425,1904,0.0,0,0
+24,heldout,Rotated credential,config,0,auth_failure,auth_failure,1,1,0.9,8,10.569,25223,2210,0.0,0,0
+24,heldout,Rotated credential,config,1,auth_failure,auth_failure,1,1,0.9,8,11.554,36215,2543,0.0,0,0
+24,heldout,Rotated credential,config,2,auth_failure,auth_failure,1,1,0.9,9,11.688,36208,2513,0.0,0,0
+25,heldout,Feature flag regression,config,0,feature_flag,feature_flag,1,1,0.85,11,13.37,50499,2778,0.0,0,0
+25,heldout,Feature flag regression,config,1,feature_flag,feature_flag,1,1,0.85,11,13.824,48597,2770,0.0,0,0
+25,heldout,Feature flag regression,config,2,feature_flag,feature_flag,1,1,0.8,12,13.571,47001,2999,0.0,0,0
+26,heldout,Memory limit too low,infrastructure,0,resource_limit,resource_limit,1,1,0.85,10,13.059,36202,2743,0.0,0,0
+26,heldout,Memory limit too low,infrastructure,1,resource_limit,resource_limit,1,1,0.85,11,14.968,45384,3032,0.0,0,0
+26,heldout,Memory limit too low,infrastructure,2,resource_limit,resource_limit,1,1,0.85,10,13.558,35704,2677,0.0,0,0
+27,heldout,CPU throttling,infrastructure,0,resource_limit,resource_limit,1,1,0.85,12,11.53,34529,2445,0.0,0,0
+27,heldout,CPU throttling,infrastructure,1,resource_limit,resource_limit,1,1,0.9,8,9.073,24449,1977,0.0,0,0
+27,heldout,CPU throttling,infrastructure,2,resource_limit,resource_limit,1,1,0.9,9,9.424,25766,2237,0.0,0,0
+28,heldout,Clock skew,infrastructure,0,clock_skew,clock_skew,1,1,0.8,12,16.637,59109,3382,0.0,0,0
+28,heldout,Clock skew,infrastructure,1,clock_skew,clock_skew,1,1,0.7,11,15.323,45605,2980,0.0,0,0
+28,heldout,Clock skew,infrastructure,2,clock_skew,clock_skew,1,1,0.8,11,14.771,46327,2965,0.0,0,0
+29,mvp,Healthy traffic spike,control,0,none,none,1,1,0.6,12,13.152,35031,3023,0.0,0,0
+29,mvp,Healthy traffic spike,control,1,none,none,1,1,0.7,11,12.229,35936,2698,0.0,0,0
+29,mvp,Healthy traffic spike,control,2,none,none,1,1,0.75,10,12.633,35801,2712,0.0,0,0
+30,mvp,Noise only,control,0,none,none,1,1,0.85,7,9.276,26726,2018,0.0,0,0
+30,mvp,Noise only,control,1,none,none,1,1,0.85,8,13.482,44649,3369,0.0,0,0
+30,mvp,Noise only,control,2,none,none,1,1,0.8,8,9.375,26016,2192,0.0,0,0

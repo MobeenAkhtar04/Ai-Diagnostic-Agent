@@ -1,0 +1,1151 @@
+
+===== [1/24] scenario 25 repeat 1 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 25
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 25 (Feature flag regression): checkout_v2_pricing flag on for 50% of customers; v2 pricing is slow
+  injected in 0s; waiting up to 480s for ['HighLatencyP95']
+PASS: scenario 25 alert after 146s seen=['HighLatencyP95']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 25 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ HighLatencyP95 on shop_api (warning): p95 latency above 1s for 2m on shop_api
+  eval fence: tools see nothing before 00:10:53 (the chaos run's baseline start)
+  ✓ s1 list_alerts() 5ms
+  ✓ s2 query_metrics(promql="http_latency_p95_seconds{service=\"shop_api\"}", minutes=15) 4ms
+  ✓ s3 top_errors(service=null, minutes=15, limit=8) 958ms
+  ✓ s4 db_activity() 36ms
+    💭 The latency jump began around 05:12, and the errors are `NoResultFound` in `render_receipt`, while Postgres shows no active queries. I'll pull a slow trace, the
+  ✓ s5 find_slow_traces(service="shop_api", min_duration_ms=1000, minutes=15, limit=5) 277ms
+  ✓ s6 get_stack_trace(signature="sqlalchemy.exc.NoResultFound: No row was found when one was requir...) 15ms
+  ✓ s7 recent_changes(since_minutes=180) 30ms
+    💭 The flag `checkout_v2_pricing` went to 50% about 15 seconds before the latency jump. Next I'll look at a slow checkout trace to see where the time goes, and che
+  ✓ s8 get_trace(trace_id="26f3a3811989181ab698b76a2e2a1918") 54ms
+  ✓ s9 search_logs(service="shop_api", level=null, contains="pricing", minutes=15, limit=10) 8ms
+    💭 The slow span is `price_engine.v2 recompute`, which runs only when the flag is on. Before blaming it, I'll check whether it is blocking the event loop (the `GET
+  ✓ s10 query_metrics(promql="event_loop_lag_seconds{service=\"shop_api\"}", minutes=15) 11ms
+  ✓ s11 container_stats(service="shop_api") 1795ms
+  ✓ s12 top_errors(service="payment_stub", minutes=15, limit=8) 19ms
+CORRECT  expected=feature_flag got=feature_flag conf=0.70 steps=12 ttd=17.4s
+
+  Summary: The checkout_v2_pricing flag went from off to 50% rollout at 05:12:23, and p95 latency on shop_api jumped from about 0.09s to over 4s starting 05:12:38. The slow traces contain a price_engine.v2 recompute span that runs only when the flag is on, taking 0.4 to 1.5s per request, and event loop lag rose at the same time. Postgres is idle and not the bottleneck, so the likely cause is the new pricing code path on half of traffic. The 33 NoResultFound errors in render_receipt began before the flag change and are a separate issue.
+   - The checkout_v2_pricing flag was changed from off to 50% rollout at 05:12:23, about 15 seconds before the p95 latency rise.  [s7, s2]
+   - p95 latency on shop_api rose from about 0.09s to 0.68s at 05:12:38 and to over 4s by 05:13:23.  [s2]
+   - A sampled slow POST /checkout trace (2.68s) included a price_engine.v2 recompute span of 362ms with feature.checkout_v2_pricing=true.  [s8]
+   - Logs show price_engine.v2 recompute taking 0.4s to 1.5s per request during the incident window.  [s9]
+   - Event loop lag on shop_api rose to 0.14 to 0.87s during the incident, while shop_api CPU was at 1.0 of 2.0 cores with no throttling, and Postgres showed only idle sessions.  [s10, s11, s4]
+   - The 33 NoResultFound errors in render_receipt began at 05:11:15, before the flag change, so they are not the cause of the latency rise.  [s3, s6]
+  Fix: Roll back the checkout_v2_pricing flag to off, or reduce its rollout to 0%, to restore latency. Then profile price_engine.v2 recompute: move any CPU-bound or synchronous work off the event loop (run it in a thread pool or precompute it), and cache results per cart. Re-enable the flag only after p95 is verified under 1s at 5% rollout. Separately, investigate the NoResultFound in render_receipt (receipts.py:11), which predates the flag change.
+
+  Full report: .data/reports/incident-0369-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 25 ...
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 4.39s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 4.36s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 3.95s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 3.72s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 3.43s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 1.91s
+clean
+  -> feature_flag vs feature_flag: CORRECT
+
+===== [2/24] scenario 22 repeat 3 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 22
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 22 (Timeout too low): PAYMENT_TIMEOUT_MS changed to 30 ms (payments take ~40 ms)
+  injected in 4s; waiting up to 480s for ['HighErrorRate']
+PASS: scenario 22 alert after 86s seen=['HighErrorRate']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 22 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ HighErrorRate on shop_api (critical): 5xx ratio above 5% for 1m on shop_api
+  eval fence: tools see nothing before 00:16:46 (the chaos run's baseline start)
+  ✓ s1 list_alerts() 5ms
+  ✓ s2 top_errors(service=null, minutes=15, limit=8) 159ms
+  ✓ s3 query_metrics(promql="http_error_ratio{service=\"shop_api\"}", minutes=15) 2ms
+    💭 The dominant error is `httpx.ReadTimeout` on the payment call. Next I'll check the payment_stub side and the outbound latency to it.
+  ✓ s4 top_errors(service="payment_stub", minutes=15, limit=8) 26ms
+  ✓ s5 query_metrics(promql="outbound_latency_p95_seconds{service=\"shop_api\"}", minutes=15) 3ms
+  ✓ s6 container_stats(service="payment_stub") 2036ms
+  ✓ s7 query_metrics(promql="db_pool_wait_seconds{service=\"shop_api\"}", minutes=15) 2ms
+    💭 Payment_stub is healthy: no errors, low CPU, and outbound p95 to it is only about 0.08–0.1s, which doesn't fit ReadTimeouts. I'll check the timeout code path, t
+  ✓ s8 get_stack_trace(signature="httpx.ReadTimeout:  @ services/shop_api/app/payment_client.py:17 i...) 112ms
+  ✓ s9 get_config(service="shop_api") 86ms
+  ✓ s10 get_trace(trace_id="64e4176afd6ea620dab8966157ab14b8") 48ms
+  ✓ s11 recent_changes(since_minutes=120) 37ms
+CORRECT  expected=config_error got=config_error conf=0.85 steps=11 ttd=15.7s
+
+  Summary: A config change at 05:18:16 cut PAYMENT_TIMEOUT_MS from 5000 to 30 on shop_api, about 90 seconds before the alert. Nearly every POST /checkout now times out calling payment_stub (httpx.ReadTimeout in payment_client.charge), even though payment_stub is healthy and answers in about 47ms, so checkout returns 500s and the 5xx ratio climbed to about 22%.
+   - The 5xx ratio on shop_api rose from about 1% to about 22% starting around 05:18, which triggered HighErrorRate.  [s3, s1]
+   - 308 of about 351 errors are httpx.ReadTimeout raised in payment_client.charge, called from checkout.  [s2, s8]
+   - A config change at 05:18:16 set PAYMENT_TIMEOUT_MS from 5000 to 30, about 1.5 minutes before the alert.  [s11]
+   - payment_stub has zero errors, uses 0.02 cores, and is not restarting, and its POST /charge completes in about 47ms in the failing trace, which is above the 30ms timeout.  [s4, s6, s10]
+   - The outbound p95 from shop_api to payment_stub stayed at about 0.08–0.10s throughout, so the dependency was not slow.  [s5]
+   - The 29 NoResultFound errors in render_receipt are a small secondary signal and do not account for the spike.  [s2]
+  Fix: Restore PAYMENT_TIMEOUT_MS to its previous value of 5000 on shop_api, which the recent change set to 30, and redeploy or reload config. Confirm the 5xx ratio returns below 1% and that payment ReadTimeouts stop. Separately, get_config reports no changes against baseline even though the change log shows this edit, so verify the config source and add validation for implausible timeout values.
+
+  Full report: .data/reports/incident-0370-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 22 ...
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.231
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.224
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.177
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.124
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.086
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.048
+clean
+  -> config_error vs config_error: CORRECT
+
+===== [3/24] scenario 26 repeat 3 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 26
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 26 (Memory limit too low): shop_api memory limit lowered to 96 MB
+  injected in 2s; waiting up to 480s for ['ContainerDown', 'ContainerRestarting', 'HighErrorRate', 'MemoryNearLimit']
+PASS: scenario 26 alert after 111s seen=['MemoryNearLimit']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 26 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ MemoryNearLimit on shop_api (warning): shop_api memory above 85% of its limit
+  eval fence: tools see nothing before 00:21:43 (the chaos run's baseline start)
+  ✓ s1 container_stats(service="shop_api") 2248ms
+  ✓ s2 query_metrics(promql="container_memory_rss_bytes{service=\"shop_api\"}", minutes=15) 4ms
+  ✓ s3 query_metrics(promql="container_memory_limit_bytes{service=\"shop_api\"}", minutes=15) 2ms
+  ✓ s4 query_metrics(promql="http_requests_per_second{service=\"shop_api\"}", minutes=15) 3ms
+    💭 The container was restarted about 2 minutes before the alert, and its memory limit dropped from 512 MB to 100 MB at the same moment. Checking what changed.
+  ✓ s5 recent_changes(since_minutes=30) 25ms
+  ✓ s6 get_config(service="shop_api") 85ms
+    💭 The limit was cut by ops at 05:23:13, and RSS has stayed flat around 85–89 MB since. Before I conclude, I'll check a longer window for any growth trend that wou
+  ✓ s7 query_metrics(promql="container_memory_rss_bytes{service=\"shop_api\"}", minutes=60) 5ms
+CORRECT  expected=resource_limit got=resource_limit conf=0.90 steps=7 ttd=13.3s
+
+  Summary: The MemoryNearLimit alert is caused by an ops change at 05:23:13 that cut shop_api's memory limit from 512 MB to 96 MB. RSS is flat at about 85–89 MB under steady load (~17 req/s), so the service sits at roughly 86% of the new limit with no growth trend. There is no user-facing impact: the error and latency metrics were not checked, and the container shows 0 restarts from OOM.
+   - The shop_api memory limit dropped from 512 MB to about 96 MB at 05:23:13, recorded as a limit_change by ops.  [s5, s3]
+   - shop_api RSS has stayed flat at about 84.8–89.2 MB since the change, with no upward trend.  [s2, s7]
+   - RSS is about 86% of the new 100.7 MB limit, which triggers the 85% alert, while the container is not OOM-killed.  [s1, s2]
+   - Request rate stayed steady at about 15.5–17 req/s through the change, so the memory level reflects normal load, not a traffic spike.  [s4]
+   - The container restart about 2 minutes before the alert was a graceful stop (signal 15, exit 0) that coincided with the limit change; it was not an OOM kill.  [s1]
+  Fix: Confirm with ops whether the 512MB->96MB limit change was intentional. If not, restore the memory limit to 512 MB (the prior value) via the deploy or compose config. If the lower limit is intended, size it with real headroom above the ~90 MB baseline, for example 192 MB or more. Keep watching RSS for a slow leak over a longer window.
+
+  Full report: .data/reports/incident-0371-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 26 ...
+  waiting for clean state: alert firing: MemoryNearLimit shop_api
+  waiting for clean state: alert firing: MemoryNearLimit shop_api
+  waiting for clean state: alert firing: MemoryNearLimit shop_api
+clean
+  -> resource_limit vs resource_limit: CORRECT
+
+===== [4/24] scenario 27 repeat 2 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 27
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 27 (CPU throttling): shop_api CPU quota lowered to 0.1 cores
+  injected in 2s; waiting up to 480s for ['HighLatencyP95']
+PASS: scenario 27 alert after 167s seen=['HighLatencyP95']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 27 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ HighLatencyP95 on shop_api (warning): p95 latency above 1s for 2m on shop_api
+  eval fence: tools see nothing before 00:26:27 (the chaos run's baseline start)
+  ✓ s1 list_alerts() 6ms
+  ✓ s2 query_metrics(promql="http_latency_p95_seconds{service=\"shop_api\"}", minutes=15) 3ms
+  ✓ s3 query_metrics(promql="db_pool_wait_seconds{service=\"shop_api\"}", minutes=15) 3ms
+  ✓ s4 query_metrics(promql="outbound_latency_p95_seconds{service=\"shop_api\"}", minutes=15) 6ms
+  ✓ s5 query_metrics(promql="db_pool_checked_out{service=\"shop_api\"}", minutes=15) 2ms
+    💭 The pool is saturated and outbound calls to payment_stub jumped to about 2.4s at the same moment. Next I'll check the payment_stub side, the shop_api errors, an
+  ✓ s6 top_errors(service=null, minutes=15, limit=8) 56ms
+  ✓ s7 top_errors(service="payment_stub", minutes=15, limit=8) 14ms
+  ✓ s8 db_activity() 41ms
+  ✓ s9 read_source(path="services/shop_api/app/checkout.py", start_line=1, end_line=80, sha=null) 90ms
+    💭 The checkout code keeps the transaction open only around the DB work, so I need to see where the slow requests spend their time. Next I'll pull a slow trace and
+  ✓ s10 find_slow_traces(service="shop_api", min_duration_ms=1000.0, minutes=10, limit=5) 177ms
+  ✓ s11 read_source(path="services/shop_api/app/payment_client.py", start_line=1, end_line=60, sh...) 49ms
+  ✓ s12 search_logs(service="payment_stub", level=null, contains=null, minutes=10, limit=10) 6ms
+WRONG  expected=resource_limit got=db_pool_exhaustion conf=0.50 steps=12 ttd=15.3s
+
+  Summary: Starting around 05:28:27, shop_api's 5-connection DB pool went fully checked out and p95 latency rose from about 0.09s to about 4.8s, with pool wait reaching about 2.4s. Postgres is not the bottleneck (9 of 100 connections, no slow queries or locks found), and the shop_api sessions sit "idle in transaction" waiting on the client during slow external calls. The likely cause is the app holding connections across the outbound payment_stub call, but I did not confirm where the session is opened, and payment_stub's own logs show 150ms and 634ms charges, so the cause is not fully established.
+   - shop_api p95 latency jumped from about 0.09s to about 4.8s starting at 05:28:42.  [s2]
+   - shop_api db_pool_checked_out reached 5.0 (its full pool size) from 05:28:27 onward, and db_pool_wait_seconds rose to about 2.4s over the same period.  [s3, s5]
+   - Outbound p95 latency from shop_api to payment_stub rose from about 0.1s to about 2.4s at the same time as the pool saturation.  [s4]
+   - Postgres shows only 9 of 100 connections in use, and the longest non-idle sessions are shop_api sessions in 'idle in transaction' waiting on Client:ClientRead, with no slow query or lock wait listed.  [s8]
+   - payment_stub reports no errors in the window, and its logged /charge calls took 150ms and 634ms, which does not match the 2.4s seen from shop_api's side.  [s7, s12]
+   - The checkout code calls the external charge() inside a request whose DB session is opened by a dependency; I did not confirm whether that session stays open across the charge call.  [s9, s11]
+  Fix: Confirm where the DB session is opened and make sure it is not held open across the payment_stub call (for example, commit or close the session before calling charge(), and open a new session afterwards). Re-check pool checked_out and idle-in-transaction counts after the change. Also compare payment_stub's server-side latency with shop_api's outbound histogram to confirm or rule out dependency latency. Add a timeout on the payment call so a slow charge cannot hold a connection indefinitely.
+
+  Full report: .data/reports/incident-0372-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 27 ...
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 4.86s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 4.84s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 4.63s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 3.76s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 2.31s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api
+clean
+  -> resource_limit vs db_pool_exhaustion: WRONG
+
+===== [5/24] scenario 27 repeat 1 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 27
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 27 (CPU throttling): shop_api CPU quota lowered to 0.1 cores
+  injected in 2s; waiting up to 480s for ['HighLatencyP95']
+PASS: scenario 27 alert after 157s seen=['HighLatencyP95']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 27 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ HighLatencyP95 on shop_api (warning): p95 latency above 1s for 2m on shop_api
+  eval fence: tools see nothing before 00:32:43 (the chaos run's baseline start)
+  ✓ s1 list_alerts() 16ms
+  ✓ s2 query_metrics(promql="http_latency_p95_seconds{service=\"shop_api\"}", minutes=15) 11ms
+  ✓ s3 query_metrics(promql="outbound_latency_p95_seconds{service=\"shop_api\"}", minutes=15) 4ms
+  ✓ s4 query_metrics(promql="db_pool_wait_seconds{service=\"shop_api\"}", minutes=15) 6ms
+  ✓ s5 query_metrics(promql="db_pool_checked_out{service=\"shop_api\"}", minutes=15) 11ms
+  ✓ s6 top_errors(service=null, minutes=15, limit=8) 35ms
+    💭 The connection pool is full (5/5) and outbound calls to payment_stub rose from 0.1s to 2.4s at the same moment. Next I'll check whether the database is the bott
+  ✓ s7 db_activity() 66ms
+  ✓ s8 find_slow_traces(service="shop_api", min_duration_ms=1000.0, minutes=15, limit=3) 203ms
+  ✓ s9 top_errors(service="payment_stub", minutes=15, limit=8) 24ms
+  ✓ s10 query_metrics(promql="container_cpu_throttled_ratio{service=\"payment_stub\"}", minutes=15) 3ms
+    💭 The database is nearly idle: 10 backends, and the shop_api sessions are idle in transaction with short durations. That points away from a slow query or lock. I'
+  ✓ s11 get_trace(trace_id="2b10330d3e344dd5c65c7cd721d2b2e0") 33ms
+  ✓ s12 read_source(path="services/shop_api/app/checkout.py", start_line=1, end_line=80, sha=null) 135ms
+WRONG  expected=resource_limit got=db_pool_exhaustion conf=0.60 steps=12 ttd=14.4s
+
+  Summary: Starting at about 05:34:50, shop_api p95 latency rose from ~0.1s to ~4.8s. The 5-connection DB pool went fully checked out and requests queued for it, while the outbound calls to payment_stub also slowed from ~0.1s to ~2.4s. The database itself is nearly idle, and payment_stub reports no errors or throttling, so the likely cause is shop_api holding pooled sessions open across the slow external payment call. Checkout is the affected path.
+   - shop_api p95 latency jumped from about 0.09s to about 4.8s starting near 05:34:58.  [s2]
+   - The shop_api DB pool hit 5 of 5 checked out at 05:34:43, and pool wait rose from ~0.007s to ~2.4s over the same window.  [s4, s5]
+   - Outbound latency to payment_stub rose from ~0.1s to ~2.4s at the same time as the pool saturated.  [s3]
+   - The database is nearly idle (10 backends total, no slow or blocking non-idle queries), so slow_query and lock_contention are unlikely.  [s7]
+   - A slow POST /checkout trace shows the 608ms outbound charge call while payment_stub's own handler took only 49ms, and payment_stub logged no errors or CPU throttling.  [s8, s11, s9, s10]
+   - checkout.py wraps only inventory and order creation in session.begin(), but calls the external charge afterward within the request-scoped session, so the connection can stay held during the payment call. The 24 NoResultFound errors in receipts.py are a separate issue, not on the latency path.  [s12, s6]
+  Fix: Keep the DB session out of the external payment call: commit or release the session before calling payment_stub, or open a short-lived session only for the DB work. Verify with pool checked-out metrics during checkout. Add a timeout and circuit breaker on the payment client, and consider raising the pool size only as a temporary measure. Separately, investigate the NoResultFound errors in receipts.py.
+
+  Full report: .data/reports/incident-0373-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 27 ...
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 4.99s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 4.85s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 4.48s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 3.89s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 2.84s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api
+clean
+  -> resource_limit vs db_pool_exhaustion: WRONG
+
+===== [6/24] scenario 26 repeat 2 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 26
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 26 (Memory limit too low): shop_api memory limit lowered to 96 MB
+  injected in 2s; waiting up to 480s for ['ContainerDown', 'ContainerRestarting', 'HighErrorRate', 'MemoryNearLimit']
+PASS: scenario 26 alert after 86s seen=['MemoryNearLimit']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 26 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ MemoryNearLimit on shop_api (warning): shop_api memory above 85% of its limit
+  eval fence: tools see nothing before 00:38:48 (the chaos run's baseline start)
+  ✓ s1 container_stats(service="shop_api") 1682ms
+  ✓ s2 query_metrics(promql="container_memory_rss_bytes{service=\"shop_api\"}", minutes=15) 4ms
+  ✓ s3 list_alerts() 2ms
+    💭 The container was restarted about 1.5 minutes before the alert, and memory sits flat at 86–90 MB against a 100.7 MB limit. I'll check what caused the restart an
+  ✓ s4 recent_changes(since_minutes=60) 29ms
+  ✓ s5 query_metrics(promql="container_memory_rss_bytes{service=\"shop_api\"}", minutes=60) 3ms
+  ✓ s6 get_config(service="shop_api") 87ms
+CORRECT  expected=resource_limit got=resource_limit conf=0.90 steps=6 ttd=11.0s
+
+  Summary: At 05:40:18Z ops lowered shop_api's container memory limit from 512MB to 96MB (about 100.7MB as reported by the container). The container was then stopped and restarted, and its RSS of about 86–90MB now sits at roughly 85–90% of the new limit, which fired MemoryNearLimit. Memory has been flat with no growth trend, and there are no OOM kills or restarts beyond the one caused by the change, so this is a limit that is too low for normal load rather than a leak.
+   - The memory limit for shop_api was changed from 512MB to 96MB by ops at 05:40:18Z, about 1.5 minutes before the alert.  [s4]
+   - The container was killed with signal 15 and restarted at the time of the limit change, and its limit now reads 100.7MB.  [s1, s4]
+   - RSS is flat at about 86–90MB across the 60-minute window, with a min of 86.3MB and a max of 90.2MB, showing no growth trend.  [s2, s5]
+   - shop_api shows restart_count 0, oom_killed false, and CPU at 0.1 cores, so there is no OOM kill and no load-driven failure.  [s1]
+   - The config has no other changes from baseline, and no deploys occurred in the last 24h.  [s6]
+  Fix: Restore shop_api's memory limit to its prior 512MB, or set it to at least 2x observed steady RSS (about 200MB+) with headroom for peaks. Confirm the change was intentional with ops. If the lower limit was meant as a test, document it. Watch RSS for a trend over several hours before deciding whether a leak exists.
+
+  Full report: .data/reports/incident-0374-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 26 ...
+  waiting for clean state: alert firing: MemoryNearLimit shop_api
+  waiting for clean state: alert firing: MemoryNearLimit shop_api
+  waiting for clean state: alert firing: MemoryNearLimit shop_api
+clean
+  -> resource_limit vs resource_limit: CORRECT
+
+===== [7/24] scenario 27 repeat 3 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 27
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 27 (CPU throttling): shop_api CPU quota lowered to 0.1 cores
+  injected in 2s; waiting up to 480s for ['HighLatencyP95']
+PASS: scenario 27 alert after 162s seen=['HighLatencyP95']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 27 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ HighLatencyP95 on shop_api (warning): p95 latency above 1s for 2m on shop_api
+  eval fence: tools see nothing before 00:43:05 (the chaos run's baseline start)
+  ✓ s1 list_alerts() 13ms
+  ✓ s2 query_metrics(promql="http_latency_p95_seconds{service=\"shop_api\"}", minutes=15) 14ms
+  ✓ s3 query_metrics(promql="outbound_latency_p95_seconds{service=\"shop_api\"}", minutes=15) 5ms
+  ✓ s4 query_metrics(promql="db_pool_wait_seconds{service=\"shop_api\"}", minutes=15) 4ms
+  ✓ s5 query_metrics(promql="http_error_ratio{service=\"shop_api\"}", minutes=15) 5ms
+    💭 Latency jumped at 05:45 and tracks the outbound call latency to payment_stub, while DB pool wait rose at the same moment. I'll check the payment_stub side, the 
+  ✓ s6 top_errors(service="payment_stub", minutes=15, limit=8) 30ms
+  ✓ s7 db_activity() 36ms
+  ✓ s8 find_slow_traces(service="shop_api", min_duration_ms=1000.0, minutes=15, limit=5) 188ms
+  ✓ s9 query_metrics(promql="container_cpu_throttled_ratio{service=\"payment_stub\"}", minutes=15) 4ms
+    💭 The DB is mostly idle, so the pool wait is not explained by the database. I'll look at one slow checkout trace to see where its time goes.
+  ✓ s10 get_trace(trace_id="1c47129ba0ca46dd1f6e3c9021529d78") 47ms
+  ✓ s11 get_trace(trace_id="01239571f74dcb92a6f2e03320e580b6") 31ms
+    💭 The traces show ~1.8s of unexplained time before the payment call in checkout and ~3.7s before the Redis call in products, which points to waiting for a pool co
+  ✓ s12 read_source(path="services/shop_api/app/checkout.py", start_line=1, end_line=80, sha=null) 108ms
+  ✓ s13 search_logs(service="shop_api", level="WARN", contains=null, minutes=10, limit=15) 33ms
+WRONG  expected=resource_limit got=db_pool_exhaustion conf=0.60 steps=13 ttd=20.4s
+
+  Summary: Starting at 05:45, shop_api p95 rose from about 0.1s to about 4.9s, and DB pool wait rose from about 0.01s to about 2.5s in the same window. Postgres is nearly idle (11 connections, no slow queries or locks), so the app's own pool of 5 connections is held too long, most likely by checkout keeping a session open across the external payment call. Customer-facing checkout and product requests are slowed, but the error ratio stays under about 1.5%.
+   - shop_api p95 latency rose from about 0.1s to about 4.9s starting at 05:45.  [s2]
+   - DB pool wait for shop_api rose from about 0.01s to about 2.5s over the same window.  [s4]
+   - Postgres had only 11 connections with no non-idle query longer than 0.4s, so the database is not the bottleneck.  [s7]
+   - Slow checkout traces show the payment call at 404ms with the stub's own handler at 86ms, and about 1.8s elapsed before the call started.  [s10]
+   - Checkout code calls the external payment charge after the transaction block, while the request-scoped session from get_session remains checked out during that call.  [s12]
+   - Slow product lookups also show about 3.7s elapsed before their Redis call, which points to waiting for a pool connection on every endpoint.  [s11]
+   - payment_stub shows no CPU throttling and no errors in the window, so the stub itself is not the cause.  [s6, s9]
+  Fix: Do not hold a DB session across the external payment call. In checkout, close the session/transaction before calling charge, or move the charge outside the request-scoped session (for example, commit the order, call payment, then update status in a new short transaction). Add a timeout on the payment client. Short term, raise the pool size or pool_timeout only if needed. Then confirm pool wait falls back to about 0.01s.
+
+  Full report: .data/reports/incident-0375-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 27 ...
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 4.85s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 4.83s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 4.54s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 4.07s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 2.80s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 0.52s
+clean
+  -> resource_limit vs db_pool_exhaustion: WRONG
+
+===== [8/24] scenario 25 repeat 3 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 25
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 25 (Feature flag regression): checkout_v2_pricing flag on for 50% of customers; v2 pricing is slow
+  injected in 0s; waiting up to 480s for ['HighLatencyP95']
+PASS: scenario 25 alert after 141s seen=['HighLatencyP95']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 25 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ HighLatencyP95 on shop_api (warning): p95 latency above 1s for 2m on shop_api
+  eval fence: tools see nothing before 00:49:21 (the chaos run's baseline start)
+  ✓ s1 list_alerts() 5ms
+  ✓ s2 query_metrics(promql="http_latency_p95_seconds{service=\"shop_api\"}", minutes=15) 13ms
+  ✓ s3 top_errors(service=null, minutes=15, limit=8) 43ms
+  ✓ s4 db_activity() 40ms
+    💭 The latency jump starts at 05:51 and a new `NoResultFound` in `receipts.py` begins at 05:49. I'll check a slow trace and the receipts code next.
+  ✓ s5 find_slow_traces(service="shop_api", min_duration_ms=1000.0, minutes=10, limit=5) 167ms
+  ✓ s6 read_source(path="services/shop_api/app/receipts.py", start_line=1, end_line=40, sha=null) 60ms
+  ✓ s7 recent_changes(since_minutes=120) 8ms
+    💭 A feature flag (`checkout_v2_pricing`, 50% rollout) was turned on about 2.4 minutes before the alert. I'll look at one slow checkout trace to see where the time
+  ✓ s8 get_trace(trace_id="12c3afc5e9271266edf432dfb0cfc370") 210ms
+  ✓ s9 db_top_queries(order_by="total_ms", limit=5) 66ms
+    💭 The slow checkout trace spends about 600 ms in `price_engine.v2 recompute`, which is the code path behind the flag. I'll check the price engine's source, the fl
+  ✓ s10 search_logs(service="shop_api", level=null, contains="price", minutes=10, limit=10) 23ms
+  ✓ s11 top_errors(service="payment_stub", minutes=15, limit=8) 17ms
+  ✓ s12 get_config(service="shop_api") 127ms
+CORRECT  expected=feature_flag got=feature_flag conf=0.72 steps=12 ttd=15.8s
+
+  Summary: The checkout_v2_pricing flag was switched from off to on for 50% of traffic about 2.4 minutes before the alert. Checkout requests on the flagged path now spend roughly 0.6s in price_engine.v2 recompute, pushing shop_api p95 from about 0.09s to about 4s. The impact is slow checkouts for half of users; errors stay low, apart from a separate NoResultFound in receipts that is not the latency driver.
+   - shop_api p95 latency jumped from about 0.09s to about 4.2s starting at 05:51, right after the flag change.  [s2]
+   - The checkout_v2_pricing flag went from off to on (50% rollout) at 05:50:51, about 2.4 minutes before the alert.  [s7]
+   - Slow POST /checkout traces show a price_engine.v2 recompute span of about 600ms with the feature.checkout_v2_pricing attribute set to true.  [s5, s8]
+   - Logs show price_engine.v2 recompute taking 0.4 to 1.1s on each recent request.  [s10]
+   - Postgres shows no lock waits or saturation: only 10 of 100 connections are in use and the top queries are fast, so the database is not the bottleneck.  [s4, s9]
+   - The 29 NoResultFound errors in receipts.py began at 05:49:22 and do not match the latency pattern, so they are treated as a separate issue.  [s3, s6]
+  Fix: Roll back the checkout_v2_pricing flag to off in /flags/flags.json (or set it to 0% rollout) to restore baseline checkout latency. Then profile price_engine.v2 recompute, which takes 0.4 to 1.1s per call, and optimise or cache it before re-enabling. Separately, investigate the NoResultFound in render_receipt (receipts.py:11), which fails when an order id is missing.
+
+  Full report: .data/reports/incident-0376-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 25 ...
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 4.29s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 4.38s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 4.23s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 4.16s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 3.83s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 2.14s
+clean
+  -> feature_flag vs feature_flag: CORRECT
+
+===== [9/24] scenario 26 repeat 1 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 26
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 26 (Memory limit too low): shop_api memory limit lowered to 96 MB
+  injected in 2s; waiting up to 480s for ['ContainerDown', 'ContainerRestarting', 'HighErrorRate', 'MemoryNearLimit']
+PASS: scenario 26 alert after 96s seen=['MemoryNearLimit']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 26 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ MemoryNearLimit on shop_api (warning): shop_api memory above 85% of its limit
+  eval fence: tools see nothing before 00:55:06 (the chaos run's baseline start)
+  ✓ s1 container_stats(service="shop_api") 1631ms
+  ✓ s2 query_metrics(promql="container_memory_rss_bytes{service=\"shop_api\"}", minutes=30) 5ms
+  ✓ s3 query_metrics(promql="container_memory_limit_bytes{service=\"shop_api\"}", minutes=30) 11ms
+  ✓ s4 list_alerts() 2ms
+    💭 The memory limit dropped from 512 MB to 100 MB at about 05:57, and the container was restarted at the same time. Current RSS is about 89 MB, which is roughly 88
+  ✓ s5 recent_changes(since_minutes=120) 42ms
+  ✓ s6 get_config(service="shop_api") 96ms
+  ✓ s7 query_metrics(promql="container_restarts_total{service=\"shop_api\"}", minutes=30) 8ms
+    💭 The limit was lowered by ops at 05:56:37, and RSS has stayed flat at about 88–90 MB for 30 minutes. I'll check whether the service is otherwise healthy.
+  ✓ s8 query_metrics(promql="http_error_ratio{service=\"shop_api\"}", minutes=15) 6ms
+  ✓ s9 query_metrics(promql="http_latency_p95_seconds{service=\"shop_api\"}", minutes=15) 12ms
+WRONG  expected=resource_limit got=config_error conf=0.85 steps=9 ttd=15.3s
+
+  Summary: The MemoryNearLimit alert comes from an ops change that cut shop_api's memory limit from 512MB to 96MB at 05:56:37, not from memory growth. RSS has stayed flat at about 88–90MB, now around 88% of the new limit. Latency (p95 about 0.09s) and error ratio (about 1.0–1.5%) are within SLO, so there is no user impact yet, but the service is close to an OOM kill if RSS rises.
+   - The shop_api memory limit changed from 512MB to about 96MB at 05:56:37 via an ops limit_change.  [s5, s3]
+   - shop_api RSS stayed flat at about 88–90MB over the 30-minute window, with no upward trend.  [s2]
+   - shop_api p95 latency stayed around 0.09s and error ratio around 1.0–1.5%, within the SLO of 1.0s and 0.05.  [s9, s8]
+   - No deploys occurred in the last 24h, and shop_api has zero restarts.  [s5, s7]
+  Fix: Confirm with ops whether the 96MB limit was intentional. If not, revert shop_api's memory limit to 512MB, the prior value. If the reduction was intended, raise it to at least 2x observed RSS (about 180MB+). Keep watching RSS for growth over the next hour to rule out a slow leak.
+
+  Full report: .data/reports/incident-0377-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 26 ...
+  waiting for clean state: alert firing: MemoryNearLimit shop_api
+  waiting for clean state: alert firing: MemoryNearLimit shop_api
+  waiting for clean state: alert firing: MemoryNearLimit shop_api
+clean
+  -> resource_limit vs config_error: WRONG
+
+===== [10/24] scenario 23 repeat 3 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 23
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 23 (Bad migration): real Alembic migration renames orders.total_cents; app code still uses it
+  injected in 4s; waiting up to 480s for ['HighErrorRate']
+PASS: scenario 23 alert after 81s seen=['HighErrorRate']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 23 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ HighErrorRate on shop_api (critical): 5xx ratio above 5% for 1m on shop_api
+  eval fence: tools see nothing before 00:59:38 (the chaos run's baseline start)
+  ✓ s1 list_alerts() 7ms
+  ✗ s2 top_errors(service="shop_api", minutes=15, limit=8) 8008ms  backend unreachable: ReadTimeout
+  ✓ s3 query_metrics(promql="http_error_ratio{service=\"shop_api\"}", minutes=15) 17ms
+    💭 The shop_api errors are ReadTimeouts to a backend. Next I'll check the downstream side and the outbound call latency.
+  ✓ s4 top_errors(service="payment_stub", minutes=15, limit=8) 38ms
+  ✗ s5 top_errors(service=null, minutes=15, limit=8) 8013ms  backend unreachable: ReadTimeout
+  ✓ s6 query_metrics(promql="outbound_latency_p95_seconds{service=\"shop_api\"}", minutes=15) 19ms
+  ✓ s7 query_metrics(promql="db_pool_wait_seconds{service=\"shop_api\"}", minutes=15) 4ms
+    💭 Payment_stub shows no errors and normal outbound latency (about 0.1s), so that path looks clean. The ReadTimeout is coming from some other backend. I'll check t
+  ✓ s8 db_activity() 47ms
+  ✓ s9 search_logs(service="shop_api", level="ERROR", contains=null, minutes=15, limit=10) 26ms
+  ✓ s10 query_metrics(promql="http_latency_p95_seconds{service=\"shop_api\"}", minutes=15) 4ms
+    💭 The shop_api errors are `column orders.total_cents does not exist`, which points to a schema change. I'll check recent migrations and get the stack trace.
+  ✓ s11 recent_changes(since_minutes=120) 19ms
+  ✗ s12 get_stack_trace(signature="sqlalchemy.exc.ProgrammingError: (sqlalchemy.dialects.postgresql.a...) 8031ms  backend unreachable: ReadTimeout
+CORRECT  expected=bad_migration got=bad_migration conf=0.85 steps=12 ttd=36.7s
+
+  Summary: A migration (0002_rename_orders_total_cents) shipped with shop_api about 1.4 minutes before the alert renamed orders.total_cents, but the running code still queries that column. Every query touching orders now raises ProgrammingError, so the 5xx ratio jumped from about 1% to about 48% within two minutes. payment_stub and the database pool are not the cause.
+   - shop_api logs show repeated sqlalchemy ProgrammingError: column orders.total_cents does not exist.  [s9]
+   - A shop_api migration 0002_rename_orders_total_cents (sha 15de74a) landed at 06:01:11Z, about 1.4 minutes before the alert.  [s11]
+   - The HTTP error ratio rose from about 0.8% to 48% between 06:01:23 and 06:02:23, starting right after the migration.  [s3]
+   - payment_stub logged zero errors in the window, and its outbound p95 stayed flat near 0.1s, so the dependency is not the cause.  [s4, s6]
+   - The database pool wait stayed flat at about 5ms and shop_api connections were idle, so pool exhaustion is ruled out.  [s7, s8]
+  Fix: Roll back migration 0002_rename_orders_total_cents (or restore the orders.total_cents column) so the schema matches what the running shop_api code expects, then redeploy. If the rename is required, ship it in two steps: first add the new column and dual-write, then switch reads, and only then drop the old name. Confirm the 5xx ratio returns to baseline (~1%) afterward.
+
+  Full report: .data/reports/incident-0378-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 23 ...
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.473
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.446
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.352
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.274
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.191
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.107
+clean
+  -> bad_migration vs bad_migration: CORRECT
+
+===== [11/24] scenario 25 repeat 2 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 25
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 25 (Feature flag regression): checkout_v2_pricing flag on for 50% of customers; v2 pricing is slow
+  injected in 0s; waiting up to 480s for ['HighLatencyP95']
+PASS: scenario 25 alert after 146s seen=['HighLatencyP95']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 25 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ HighLatencyP95 on shop_api (warning): p95 latency above 1s for 2m on shop_api
+  eval fence: tools see nothing before 01:04:49 (the chaos run's baseline start)
+  ✓ s1 list_alerts() 7ms
+  ✓ s2 query_metrics(promql="http_latency_p95_seconds{service=\"shop_api\"}", minutes=15) 4ms
+  ✓ s3 query_metrics(promql="outbound_latency_p95_seconds{service=\"shop_api\"}", minutes=15) 5ms
+  ✓ s4 query_metrics(promql="db_pool_wait_seconds{service=\"shop_api\"}", minutes=15) 4ms
+  ✓ s5 top_errors(service=null, minutes=15, limit=8) 53ms
+    💭 Latency rose together with outbound calls to payment_stub and with pool wait time on shop_api. Next I'll check a slow trace, payment_stub's side, and the databa
+  ✓ s6 find_slow_traces(service="shop_api", min_duration_ms=1000.0, minutes=15, limit=3) 145ms
+  ✓ s7 top_errors(service="payment_stub", minutes=15, limit=8) 65ms
+  ✓ s8 db_activity() 37ms
+  ✓ s9 container_stats(service="payment_stub") 1910ms
+    💭 Payment_stub shows no errors and is healthy, so the slowness is on the shop_api side. I'll look at one slow checkout trace and the checkout code.
+  ✓ s10 get_trace(trace_id="0c45fd626c0bcd23d26a574ee9ab9096") 111ms
+  ✓ s11 read_source(path="services/shop_api/app/checkout.py", start_line=1, end_line=80, sha=null) 70ms
+    💭 The slow trace shows a 817 ms `price_engine.v2 recompute` span behind the `checkout_v2_pricing` flag. I'll check whether the flag was recently changed and what 
+  ✓ s12 recent_changes(since_minutes=60) 20ms
+  ✓ s13 read_source(path="services/shop_api/app/pricing.py", start_line=1, end_line=80, sha=null) 41ms
+CORRECT  expected=feature_flag got=feature_flag conf=0.70 steps=13 ttd=18.2s
+
+  Summary: The checkout_v2_pricing flag was turned from off to 50% rollout about 2.4 minutes before the alert, and the v2 pricing path runs an expensive brute-force discount recompute on every checkout for those users. That pushed shop_api p95 from about 0.09s to over 4s, and the pool wait and outbound-call timings rose with it. Payment_stub is healthy and no database lock or query problem is visible, so the regression is in the shop_api pricing path.
+   - shop_api p95 latency rose from about 0.09s to about 4.3s starting at 06:06, matching the alert window.  [s2]
+   - The checkout_v2_pricing flag changed from off to on (50% rollout) at 06:06:19, about 2.4 minutes before the alert.  [s12]
+   - A slow POST /checkout trace spends 817 ms in the 'price_engine.v2 recompute' span, while the payment_stub call takes only about 43 ms.  [s10]
+   - The v2 pricing code evaluates 400 tiers x 3 percentages x up to 15000 quantity breaks per item, which is CPU-heavy and runs in a thread for every checkout.  [s13]
+   - payment_stub reports no errors and low CPU and memory, so it is not the source of the slowdown.  [s7, s9]
+   - Database connections are few (11 of 100) and no slow queries or lock waits appear, so the database is not the bottleneck.  [s8]
+  Fix: Roll back or disable the checkout_v2_pricing flag now to 0% to restore latency. Then fix the pricing code before re-enabling: _recompute_v2 loops over 400 tiers x 3 percentages x 15000 quantity breaks per item, which is pointless work. Replace it with a direct computation of the best discount per item (or a precomputed lookup table), and add a test to confirm the totals match v1 before the next rollout.
+
+  Full report: .data/reports/incident-0379-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 25 ...
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 4.36s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 4.41s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 4.08s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 3.85s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 2.61s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 1.95s
+clean
+  -> feature_flag vs feature_flag: CORRECT
+
+===== [12/24] scenario 5 repeat 3 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 5
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 5 (Deadlock): bundle-promo carts lock two SKUs in opposite orders
+  injected in 0s; waiting up to 480s for ['HighErrorRate', 'HighLatencyP95']
+PASS: scenario 5 alert after 106s seen=['HighErrorRate']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 5 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ HighErrorRate on shop_api (critical): 5xx ratio above 5% for 1m on shop_api
+  eval fence: tools see nothing before 01:10:42 (the chaos run's baseline start)
+  ✓ s1 list_alerts() 6ms
+  ✓ s2 top_errors(service="shop_api", minutes=15, limit=8) 79ms
+  ✓ s3 query_metrics(promql="http_error_ratio{service=\"shop_api\"}", minutes=15) 2ms
+    💭 The main error is Postgres deadlocks in `reserve_inventory`. I'll check the locks, the source, and the stack trace together.
+  ✓ s4 db_locks() 221ms
+  ✓ s5 read_source(path="services/shop_api/app/inventory.py", start_line=1, end_line=60, sha=null) 46ms
+  ✓ s6 get_stack_trace(signature="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg...) 50ms
+    💭 The deadlock is in `reserve_inventory`, which updates SKUs in the order the cart supplies them. I'll check whether the caller sorts items, and whether anything 
+  ✓ s7 read_source(path="services/shop_api/app/checkout.py", start_line=1, end_line=60, sha=null) 72ms
+  ✓ s8 recent_changes(since_minutes=180) 14ms
+    💭 No deploys in the last 3 hours, so the cause is probably in the code path itself. I'll check one failing trace to confirm that multiple SKUs are reserved in dif
+  ✓ s9 get_trace(trace_id="2d21f3ec60075fd4232266acabcbfaa6") 32ms
+CORRECT  expected=deadlock got=deadlock conf=0.85 steps=9 ttd=15.5s
+
+  Summary: Concurrent POST /checkout requests reserve inventory by running one UPDATE per cart item, in the order the client sent the items, with no sorting. Two transactions that touch the same SKUs in opposite order deadlock, Postgres aborts one, and checkout returns 500. This produced about 124 deadlock errors in 15 minutes and pushed the 5xx ratio to about 5-6%, above the 5% SLO.
+   - shop_api logged 124 'deadlock detected' errors in reserve_inventory (inventory.py:7) in the 15-minute window, starting about 1.8 minutes before the alert.  [s2, s6]
+   - The 5xx ratio rose from about 0.4% to about 5-6% and crossed the 5% alert threshold at about 06:12-06:13.  [s3]
+   - db_locks shows the blocking chain is entirely shop_api sessions (pids 62524, 62525, 62526, 62527, 62576) all running the same inventory UPDATE, with 8 deadlocks in the last 15 minutes.  [s4]
+   - reserve_inventory issues one UPDATE per item in the caller's item order with no sort by SKU, so concurrent carts that share SKUs in different orders acquire row locks in opposite order.  [s5, s7]
+   - No deploys or config changes were recorded in the last 3 hours, so the trigger is the existing code under the current traffic mix.  [s8]
+   - The failing POST /checkout trace returned 500 after about 1 second, which fits a transaction aborted after lock waits.  [s9]
+  Fix: In services/shop_api/app/inventory.py, sort items by sku before the loop in reserve_inventory so every transaction locks rows in the same global order. Optionally add a bounded retry for deadlock errors (SQLSTATE 40P01) at the checkout transaction level. Also investigate the separate NoResultFound in receipts.py:11 render_receipt (30 errors), which is unrelated to the deadlock.
+
+  Full report: .data/reports/incident-0380-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 5 ...
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.047; shop_api p95 2.27s
+  waiting for clean state: shop_api error ratio 0.047; shop_api p95 2.30s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api error ratio 0.046; shop_api p95 2.30s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api error ratio 0.040; shop_api p95 2.16s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 1.84s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 1.64s
+clean
+  -> deadlock vs deadlock: CORRECT
+
+===== [13/24] scenario 5 repeat 2 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 5
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 5 (Deadlock): bundle-promo carts lock two SKUs in opposite orders
+  injected in 0s; waiting up to 480s for ['HighErrorRate', 'HighLatencyP95']
+PASS: scenario 5 alert after 116s seen=['HighErrorRate']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 5 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ HighErrorRate on shop_api (critical): 5xx ratio above 5% for 1m on shop_api
+  eval fence: tools see nothing before 01:15:53 (the chaos run's baseline start)
+  ✓ s1 list_alerts() 9ms
+  ✓ s2 top_errors(service="shop_api", minutes=15, limit=8) 99ms
+  ✓ s3 query_metrics(promql="http_error_ratio{service=\"shop_api\"}", minutes=15) 2ms
+    💭 The main signal is deadlocks in `reserve_inventory`. I'll check the stack trace, the database lock state, and the worker side in parallel.
+  ✓ s4 get_stack_trace(signature="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg...) 70ms
+  ✓ s5 db_locks() 181ms
+  ✓ s6 top_errors(service="worker", minutes=15, limit=8) 9ms
+  ✓ s7 recent_changes(since_minutes=120) 10ms
+    💭 The deadlocks are between shop_api sessions updating the same `inventory` rows. Next I'll read the source to see how the rows are ordered, and check whether `No
+  ✓ s8 read_source(path="services/shop_api/app/inventory.py", start_line=1, end_line=60, sha=null) 60ms
+  ✓ s9 read_source(path="services/shop_api/app/checkout.py", start_line=1, end_line=60, sha=null) 32ms
+CORRECT  expected=deadlock got=deadlock conf=0.85 steps=9 ttd=13.8s
+
+  Summary: POST /checkout requests deadlock in reserve_inventory, which issues one UPDATE per item in request order without a consistent SKU lock order. Concurrent checkouts that touch the same SKUs in different orders block each other, Postgres aborts the victims, and about 137 deadlock errors in 15 minutes push the shop_api 5xx ratio from about 1% to 6.8%, above the 5% SLO.
+   - The 5xx ratio for shop_api rose from about 1.5% to 6.8% over the window, crossing the 5% threshold at the alert time.  [s3]
+   - The dominant error is 'deadlock detected' at inventory.py:7 in reserve_inventory, with 134 occurrences in 15 minutes, first seen about 1.9 minutes before the alert.  [s2, s4]
+   - The failing statement is UPDATE inventory SET qty = qty - :n WHERE sku = :sku, and pg_locks shows shop_api backends blocking each other in a cycle on these rows.  [s4, s5]
+   - reserve_inventory loops over req.items in the order the client sent them with no sort by sku, and checkout runs it inside one transaction, so lock acquisition order varies between requests.  [s8, s9]
+   - No deploys or config changes in the last 2 hours, and the worker service shows no errors, so the trigger is concurrent checkout traffic rather than a code change.  [s6, s7]
+  Fix: Make reserve_inventory lock rows in a deterministic order: sort items by sku before the UPDATE loop (for example, `for item in sorted(items, key=lambda i: i.sku)`), so every transaction acquires row locks in the same sequence and cycles cannot form. Optionally batch the updates into one statement with ORDER BY sku. Add retry on deadlock (SQLSTATE 40P01) for the checkout transaction. The secondary NoResultFound in receipts.py:11 (28 occurrences) should be checked separately.
+
+  Full report: .data/reports/incident-0381-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 5 ...
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.069; shop_api p95 2.48s
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.061; shop_api p95 2.65s
+  waiting for clean state: alert firing: HighErrorRate shop_api; alert firing: HighLatencyP95 shop_api; shop_api error ratio 0.047
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api error ratio 0.037; shop_api p95 2.35s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 1.96s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 1.11s
+clean
+  -> deadlock vs deadlock: CORRECT
+
+===== [14/24] scenario 5 repeat 1 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 5
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 5 (Deadlock): bundle-promo carts lock two SKUs in opposite orders
+  injected in 0s; waiting up to 480s for ['HighErrorRate', 'HighLatencyP95']
+PASS: scenario 5 alert after 116s seen=['HighErrorRate']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 5 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ HighErrorRate on shop_api (critical): 5xx ratio above 5% for 1m on shop_api
+  eval fence: tools see nothing before 01:21:11 (the chaos run's baseline start)
+  ✓ s1 list_alerts() 11ms
+  ✓ s2 top_errors(service="shop_api", minutes=15, limit=8) 114ms
+  ✓ s3 query_metrics(promql="http_error_ratio{service=\"shop_api\"}", minutes=15) 8ms
+    💭 Two signatures: deadlocks in `reserve_inventory` (131) and `NoResultFound` in `render_receipt` (32). I'll check the deadlock stack, the DB lock state, and the s
+  ✓ s4 get_stack_trace(signature="sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg...) 101ms
+  ✓ s5 db_locks() 196ms
+  ✓ s6 read_source(path="services/shop_api/app/inventory.py", start_line=1, end_line=60, sha=null) 50ms
+    💭 The deadlock pattern fits: `reserve_inventory` updates SKUs in caller order, and the blocked sessions are all shop_api. Next I'll check whether the caller sorts
+  ✓ s7 search_logs(service="shop_api", level=null, contains="reserve", minutes=10, limit=5) 38ms
+  ✓ s8 read_source(path="services/shop_api/app/checkout.py", start_line=1, end_line=60, sha=null) 60ms
+  ✓ s9 get_stack_trace(signature="sqlalchemy.exc.NoResultFound: No row was found when one was requir...) 64ms
+  ✓ s10 recent_changes(since_minutes=120) 16ms
+CORRECT  expected=deadlock got=deadlock conf=0.85 steps=10 ttd=17.3s
+
+  Summary: Concurrent POST /checkout requests run `reserve_inventory`, which issues one UPDATE per item in the caller's order with no sorting. Overlapping checkouts that touch the same SKUs in different orders deadlock, and Postgres aborts the victims with 500s (about 131 deadlock errors in 15 minutes), which pushed the 5xx ratio to about 5.9% against the 5% SLO. A smaller NoResultFound in render_receipt (32 errors) is a secondary issue that I did not trace to a cause.
+   - The 5xx ratio for shop_api rose from about 1% to 5.9%, crossing the 5% threshold, starting around 06:23.  [s3]
+   - The dominant error is a Postgres 'deadlock detected' raised from reserve_inventory at inventory.py:7 (131 of 174 errors in 15 minutes).  [s2, s4]
+   - The blocking chain shows multiple shop_api sessions running the same inventory UPDATE on the same SKU and waiting on each other, with recent deadlocks logged.  [s5]
+   - reserve_inventory issues per-item UPDATE statements in the order items arrive, with no sorting by SKU, and checkout calls it inside a single transaction.  [s6, s8]
+   - The NoResultFound in render_receipt (32 errors) is a smaller, separate error signature and is not explained by the deadlock evidence.  [s2, s9]
+   - No deploys or config changes in the last 2 hours, so the trigger is load-driven concurrency, not a code change.  [s10]
+  Fix: Make reserve_inventory lock rows in a consistent global order: sort items by sku before the UPDATE loop in services/shop_api/app/inventory.py, so every transaction acquires row locks in the same sequence. Optionally do all reservations in one UPDATE ... WHERE sku = ANY(...) ordered by sku. Add a bounded retry for SQLSTATE 40P01 at the checkout level. Separately, investigate the render_receipt NoResultFound (order rows missing or not yet committed when the receipt is requested).
+
+  Full report: .data/reports/incident-0382-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 5 ...
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.063; shop_api p95 2.53s
+  waiting for clean state: alert firing: HighErrorRate shop_api; alert firing: HighLatencyP95 shop_api; shop_api error ratio 0.061
+  waiting for clean state: alert firing: HighErrorRate shop_api; alert firing: HighLatencyP95 shop_api; shop_api error ratio 0.055
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api error ratio 0.042; shop_api p95 2.28s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api error ratio 0.037; shop_api p95 2.12s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api; shop_api p95 1.47s
+  waiting for clean state: alert firing: HighLatencyP95 shop_api
+clean
+  -> deadlock vs deadlock: CORRECT
+
+===== [15/24] scenario 19 repeat 2 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 19
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 19 (Cache outage): redis container stopped
+  injected in 1s; waiting up to 480s for ['ContainerDown', 'HighErrorRate']
+PASS: scenario 19 alert after 66s seen=['ContainerDown']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 19 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ ContainerDown on redis (critical): redis is not running
+  eval fence: tools see nothing before 01:26:44 (the chaos run's baseline start)
+  ✓ s1 container_stats(service="redis") 143ms
+  ✓ s2 list_alerts() 3ms
+  ✓ s3 query_metrics(promql="cache_hit_ratio{service=\"shop_api\"}", minutes=15) 2ms
+    💭 Redis exited cleanly after a SIGTERM (exit 0, not OOM), about 1 minute before the alert. Next I'll check the downstream impact on shop_api and Postgres, and loo
+  ✓ s4 query_metrics(promql="http_latency_p95_seconds{service=\"shop_api\"}", minutes=15) 9ms
+  ✓ s5 query_metrics(promql="http_error_ratio{service=\"shop_api\"}", minutes=15) 5ms
+  ✓ s6 recent_changes(since_minutes=120) 25ms
+  ✗ s7 top_errors(service="shop_api", minutes=15, limit=8) 8007ms  backend unreachable: ReadTimeout
+    💭 Shop_api error ratio went from about 1.7% to 47% within about a minute of Redis stopping. Next I'll check whether the errors come from Redis, and whether Postgr
+  ✓ s8 search_logs(service="shop_api", level=null, contains=null, minutes=5, limit=15) 18ms
+  ✗ s9 top_errors(service=null, minutes=5, limit=8) 8005ms  backend unreachable: ReadTimeout
+  ✓ s10 query_metrics(promql="pg_connections", minutes=10) 7ms
+  ✓ s11 query_metrics(promql="db_pool_checked_out{service=\"shop_api\"}", minutes=10) 3ms
+CORRECT  expected=cache_failure got=cache_failure conf=0.85 steps=11 ttd=28.7s
+
+  Summary: The redis container was stopped (SIGTERM, clean exit 0, not OOM) about a minute before the alert, after running for about 86 minutes. shop_api lost its cache: its Redis calls fail with "Error -2 connecting to redis:6379. Name or service not known", and its 5xx ratio rose from about 1.7% to 47% within about a minute. Postgres is not saturated, so this is a cache outage rather than a database problem.
+   - The redis container is not running; it exited with code 0 after a kill signal 15 about 1.1 minutes before the alert, with no OOM.  [s1]
+   - shop_api errors show redis.exceptions.ConnectionError connecting to redis:6379 (name or service not known), and GET /products returns 500.  [s8]
+   - shop_api http_error_ratio rose from about 0.017 to 0.475 in the minute after Redis stopped, while p95 latency stayed near 0.09s.  [s5, s4]
+   - Postgres shows only 1 active backend and 10 idle, and shop_api pool checkout is 0, so the database and pool are not the bottleneck.  [s10, s11]
+   - No deploys or config changes occurred in the last 120 minutes, so no code change explains the stop.  [s6]
+  Fix: Restart the redis container (restart_service requires human approval) and confirm it is healthy. Then verify shop_api cache hit ratio returns to about 0.6 or higher and the 5xx ratio falls below 0.05. Find out why redis received a SIGTERM (a manual stop, a deploy script, or an orchestrator action), and add a restart policy so the container comes back automatically. Consider making shop_api fail open on cache errors so a Redis outage degrades latency instead of returning 500s.
+
+  Full report: .data/reports/incident-0383-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 19 ...
+  waiting for clean state: alert firing: HighErrorRate shop_api; alert firing: ContainerDown redis; shop_api error ratio 0.523
+  waiting for clean state: alert firing: HighErrorRate shop_api; alert firing: ContainerDown redis; shop_api error ratio 0.496
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.412
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.311
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.175
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.084
+  waiting for clean state: alert firing: HighErrorRate shop_api
+clean
+  -> cache_failure vs cache_failure: CORRECT
+
+===== [16/24] scenario 23 repeat 2 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 23
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 23 (Bad migration): real Alembic migration renames orders.total_cents; app code still uses it
+  injected in 4s; waiting up to 480s for ['HighErrorRate']
+PASS: scenario 23 alert after 82s seen=['HighErrorRate']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 23 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ HighErrorRate on shop_api (critical): 5xx ratio above 5% for 1m on shop_api
+  eval fence: tools see nothing before 01:31:38 (the chaos run's baseline start)
+  ✓ s1 list_alerts() 841ms
+  ✗ s2 top_errors(service="shop_api", minutes=15, limit=8) 8014ms  backend unreachable: ReadTimeout
+  ✓ s3 query_metrics(promql="http_error_ratio{service=\"shop_api\"}", minutes=15) 21ms
+    💭 The error ratio jumped from about 1% to nearly 48% starting around 06:33, and the only shop_api error is a ReadTimeout to a backend. Next I'll check the downstr
+  ✓ s4 top_errors(service="payment_stub", minutes=15, limit=8) 43ms
+  ✓ s5 query_metrics(promql="outbound_latency_p95_seconds{service=\"shop_api\"}", minutes=15) 9ms
+  ✓ s6 query_metrics(promql="db_pool_checked_out{service=\"shop_api\"}", minutes=15) 7ms
+  ✓ s7 container_stats(service="payment_stub") 2162ms
+    💭 Payment_stub shows no errors and only a mild outbound latency rise, and shop_api's pool metric reads zero. The ReadTimeout is coming from somewhere else, so I'l
+  ✓ s8 find_slow_traces(service="shop_api", min_duration_ms=1000.0, minutes=15, limit=5) 300ms
+  ✓ s9 search_logs(service="shop_api", level="ERROR", contains=null, minutes=15, limit=10) 32ms
+  ✓ s10 db_activity() 53ms
+    💭 The errors are now `column orders.total_cents does not exist`, which points to a schema mismatch. I'll check for a recent migration and get the full error break
+  ✓ s11 recent_changes(since_minutes=180) 33ms
+  ✗ s12 top_errors(service="shop_api", minutes=5, limit=8) 8013ms  backend unreachable: ReadTimeout
+CORRECT  expected=bad_migration got=bad_migration conf=0.80 steps=12 ttd=34.9s
+
+  Summary: Migration 0002_rename_orders_total_cents shipped with commit 1188a20 at 06:33:12, about 1.4 minutes before the alert. The shop_api code still queries orders.total_cents, which no longer exists, so requests touching orders fail with ProgrammingError. The 5xx ratio rose from about 1% to about 48% over the following minutes.
+   - The shop_api error ratio rose from about 1% to about 48% starting around 06:33, right after the deploy window.  [s3]
+   - shop_api logs show repeated ProgrammingError: column orders.total_cents / "total_cents" of relation "orders" does not exist.  [s9]
+   - A migration 0002_rename_orders_total_cents was applied by CI in shop_api (commit 1188a20) at 06:33:12, about 1.4 minutes before the alert.  [s11]
+   - payment_stub reports no errors and is running normally, so the failure is not in that dependency.  [s4, s7]
+   - The database shows no lock or long-running query activity, so the failures are not caused by database contention.  [s10]
+  Fix: Roll back migration 0002_rename_orders_total_cents, or deploy a fix so the code matches the current schema. Either restore the total_cents column, or update the shop_api queries and models to use the renamed column. Then run the migration and the code change together as one release. Confirm that the 5xx ratio returns to baseline. Add a pre-deploy check that compares ORM column names with the live schema.
+
+  Full report: .data/reports/incident-0384-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 23 ...
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.479; shop_api p95 0.67s
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.424; shop_api p95 0.67s
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.325
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.249
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.179
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.098
+clean
+  -> bad_migration vs bad_migration: CORRECT
+
+===== [17/24] scenario 23 repeat 1 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 23
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 23 (Bad migration): real Alembic migration renames orders.total_cents; app code still uses it
+  injected in 5s; waiting up to 480s for ['HighErrorRate']
+PASS: scenario 23 alert after 76s seen=['HighErrorRate']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 23 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ HighErrorRate on shop_api (critical): 5xx ratio above 5% for 1m on shop_api
+  eval fence: tools see nothing before 01:36:51 (the chaos run's baseline start)
+  ✓ s1 list_alerts() 10ms
+  ✗ s2 top_errors(service="shop_api", minutes=15, limit=8) 8006ms  backend unreachable: ReadTimeout
+  ✓ s3 query_metrics(promql="http_error_ratio{service=\"shop_api\"}", minutes=15) 15ms
+    💭 The shop_api error ratio jumped from about 1.5% to 46% starting around 06:38. Next I'll check the outbound calls, the payment_stub errors, and the database side
+  ✓ s4 query_metrics(promql="outbound_latency_p95_seconds{service=\"shop_api\"}", minutes=15) 6ms
+  ✓ s5 top_errors(service="payment_stub", minutes=15, limit=8) 46ms
+  ✓ s6 db_activity() 42ms
+  ✓ s7 container_stats(service="payment_stub") 1768ms
+    💭 Outbound calls to payment_stub look healthy, and the database has no active sessions. The shop_api errors are ReadTimeouts, so I'll look at the slow traces and 
+  ✓ s8 find_slow_traces(service="shop_api", min_duration_ms=1000.0, minutes=15, limit=5) 130ms
+  ✓ s9 search_logs(service="shop_api", level="ERROR", contains=null, minutes=15, limit=15) 31ms
+  ✓ s10 query_metrics(promql="db_pool_wait_seconds{service=\"shop_api\"}", minutes=15) 3ms
+    💭 The shop_api errors are `column orders.total_cents does not exist`, which points to a schema change. I'll check recent migrations and the stack trace for the fa
+  ✓ s11 recent_changes(since_minutes=180) 39ms
+  ✗ s12 get_stack_trace(signature="sqlalchemy.exc.ProgrammingError: (sqlalchemy.dialects.postgresql.a...) 8008ms  backend unreachable: ReadTimeout
+CORRECT  expected=bad_migration got=bad_migration conf=0.85 steps=12 ttd=30.6s
+
+  Summary: A migration (0002_rename_orders_total_cents, deployed by CI at 06:38:26) renamed the orders.total_cents column, but shop_api still queries that column. Queries fail with ProgrammingError, so the 5xx ratio rose from about 1.5% to 46% starting at 06:38. The payment_stub, connection pool and database load all look healthy, so the failure is isolated to the schema mismatch.
+   - shop_api logs show repeated sqlalchemy ProgrammingError: column orders.total_cents does not exist, starting 06:39:55.  [s9]
+   - The http_error_ratio for shop_api rose from about 0.016 to 0.466 between 06:38:06 and 06:39:51.  [s3]
+   - A migration 0002_rename_orders_total_cents was applied to shop_api by CI at 06:38:26, about 1.3 minutes before the alert.  [s11]
+   - payment_stub outbound p95 latency stayed flat near 0.098s throughout the window, and payment_stub logged no errors.  [s4, s5, s7]
+   - db_pool_wait_seconds stayed under about 0.012s, and no non-idle or long-running queries appeared in db_activity, so pool exhaustion and DB slowness are ruled out.  [s6, s10]
+  Fix: Roll back migration 0002_rename_orders_total_cents (or re-add the total_cents column as a compatibility alias) so the schema matches what shop_api expects. Alternatively, deploy a code fix that reads the renamed column name. Make the schema migration and the code change ship together, or use an expand/contract pattern. Then confirm the 5xx ratio returns below 5%.
+
+  Full report: .data/reports/incident-0385-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 23 ...
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.483
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.484
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.404
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.261
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.163
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.077
+clean
+  -> bad_migration vs bad_migration: CORRECT
+
+===== [18/24] scenario 19 repeat 3 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 19
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 19 (Cache outage): redis container stopped
+  injected in 1s; waiting up to 480s for ['ContainerDown', 'HighErrorRate']
+PASS: scenario 19 alert after 66s seen=['ContainerDown']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 19 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ ContainerDown on redis (critical): redis is not running
+  eval fence: tools see nothing before 01:41:53 (the chaos run's baseline start)
+  ✓ s1 container_stats(service="redis") 145ms
+  ✓ s2 list_alerts() 2ms
+  ✓ s3 query_metrics(promql="cache_hit_ratio{service=\"shop_api\"}", minutes=15) 2ms
+  ✓ s4 query_metrics(promql="http_error_ratio{service=\"shop_api\"}", minutes=15) 1ms
+    💭 Redis was stopped by a SIGTERM (exit 0, not OOM), and cache hit ratio dropped while shop_api's error ratio climbed from about 1% to 49%. Next I'll check what sh
+  ✗ s5 top_errors(service="shop_api", minutes=15, limit=8) 8012ms  backend unreachable: ReadTimeout
+  ✗ s6 top_errors(service=null, minutes=15, limit=8) 8007ms  backend unreachable: ReadTimeout
+  ✓ s7 recent_changes(since_minutes=60) 52ms
+  ✓ s8 query_metrics(promql="pg_connections", minutes=15) 9ms
+    💭 Postgres connections are low and not saturated. The errors are `ReadTimeout`, which is odd for a stopped Redis that would normally refuse connections. I'll chec
+  ✓ s9 search_logs(service="shop_api", level=null, contains=null, minutes=10, limit=15) 12ms
+  ✓ s10 query_metrics(promql="http_latency_p95_seconds{service=\"shop_api\"}", minutes=10) 4ms
+  ✓ s11 db_top_queries(order_by="total_ms", limit=5) 62ms
+  ✓ s12 query_metrics(promql="event_loop_lag_seconds{service=\"shop_api\"}", minutes=10) 4ms
+CORRECT  expected=cache_failure got=cache_failure conf=0.80 steps=12 ttd=29.4s
+
+  Summary: Redis was stopped (SIGTERM, exit 0, not an OOM) about 1 minute before the alert, so shop_api lost its read-through cache. shop_api logs show redis ConnectionError on GET /products/{sku}, which returns 500, and the shop_api error ratio rose from about 1% to 49% over the window. Postgres connections and latency stayed within normal range, so the failure is contained to the cache path.
+   - The redis container is not running; it exited with code 0 after a kill signal 15 and was not OOM-killed.  [s1, s2]
+   - shop_api cache hit ratio fell from about 0.59 to 0.47 in the final minute as Redis went down.  [s3]
+   - shop_api HTTP error ratio rose from about 1% to 49% over the last few minutes, starting when Redis stopped.  [s4]
+   - shop_api logs show repeated redis.exceptions.ConnectionError connecting to redis:6379, with GET /products/{sku} returning 500.  [s9]
+   - Postgres connections are low (about 10 idle, 1 active) and no pool saturation is visible, and the top queries are fast (mean under 1 ms), so the database is not the bottleneck.  [s8, s11]
+   - payment_stub calls still return 200, so the payment dependency is healthy and not the cause.  [s9]
+  Fix: Restart the redis container (approval requested) and confirm it is healthy. Find out why it received SIGTERM (kill signal 15, exit 0), since nothing in recent changes explains it; check the host or orchestrator for a manual stop or a restart policy gap. Once Redis is back, watch the shop_api error ratio and cache hit ratio return to baseline. Consider making shop_api degrade gracefully when Redis is unavailable (fall through to Postgres, or serve stale data) so a cache outage does not produce 500s on GET /products.
+
+  Full report: .data/reports/incident-0386-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 19 ...
+  waiting for clean state: alert firing: HighErrorRate shop_api; alert firing: ContainerDown redis; shop_api error ratio 0.527
+  waiting for clean state: alert firing: HighErrorRate shop_api; alert firing: ContainerDown redis; shop_api error ratio 0.517
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.425
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.287
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.188
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.097
+  waiting for clean state: alert firing: HighErrorRate shop_api
+clean
+  -> cache_failure vs cache_failure: CORRECT
+
+===== [19/24] scenario 22 repeat 1 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 22
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 22 (Timeout too low): PAYMENT_TIMEOUT_MS changed to 30 ms (payments take ~40 ms)
+  injected in 6s; waiting up to 480s for ['HighErrorRate']
+PASS: scenario 22 alert after 81s seen=['HighErrorRate']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 22 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ HighErrorRate on shop_api (critical): 5xx ratio above 5% for 1m on shop_api
+  eval fence: tools see nothing before 01:46:49 (the chaos run's baseline start)
+  ✓ s1 list_alerts() 5ms
+  ✓ s2 top_errors(service="shop_api", minutes=15, limit=8) 187ms
+  ✓ s3 query_metrics(promql="http_error_ratio{service=\"shop_api\"}", minutes=15) 3ms
+    💭 The errors are mostly `httpx.ReadTimeout` on the payment charge call. Next I'll check the payment_stub side and the outbound latency to it.
+  ✓ s4 top_errors(service=null, minutes=15, limit=8) 199ms
+  ✓ s5 query_metrics(promql="outbound_latency_p95_seconds{service=\"shop_api\"}", minutes=15) 2ms
+  ✓ s6 container_stats(service="payment_stub") 1690ms
+    💭 Outbound p95 to payment_stub is flat at about 0.1s, which doesn't fit a dependency that is slow. I'll check the payment_stub side and one slow trace.
+  ✓ s7 top_errors(service="payment_stub", minutes=15, limit=8) 33ms
+  ✓ s8 get_trace(trace_id="3e5f2c57f2c4647591900cf2d0038a40") 46ms
+  ✓ s9 read_source(path="services/shop_api/app/payment_client.py", start_line=1, end_line=40, sh...) 74ms
+    💭 The trace is odd: payment_stub returned 200 in about 46ms, yet shop_api recorded a ReadTimeout on that call. The timeout value itself may be the problem, so I'l
+  ✓ s10 get_config(service="shop_api") 113ms
+  ✓ s11 recent_changes(since_minutes=120) 19ms
+CORRECT  expected=config_error got=config_error conf=0.90 steps=11 ttd=15.8s
+
+  Summary: At 06:48:20Z the shop_api config changed PAYMENT_TIMEOUT_MS from 5000 to 30, so every call from shop_api to payment_stub times out after 30ms. The payment call fails with httpx.ReadTimeout (about 310 of 337 errors in 15 min), and POST /checkout returns 500s, pushing the 5xx ratio from about 1% to 22%. payment_stub itself is healthy and answers in about 46ms, so the fault is the timeout value, not the dependency.
+   - The 5xx ratio on shop_api rose from about 1.2% to 22.5% starting around 06:48, crossing the 5% alert threshold.  [s3]
+   - Of 337 shop_api errors in 15 minutes, 310 are httpx.ReadTimeout raised in payment_client.py charge(), first seen 06:48:25Z.  [s2]
+   - A config change at 06:48:20Z set PAYMENT_TIMEOUT_MS from 5000 to 30 on shop_api, and no other config differs from baseline.  [s10, s11]
+   - A sampled checkout trace shows the payment_stub POST /charge completing with HTTP 200 in about 46ms, which is longer than the 30ms client timeout.  [s8]
+   - payment_stub logs no errors, runs at 0.02 cores with 0 restarts, and the outbound p95 to payment_stub stays flat near 0.1s, so the dependency is not degraded.  [s6, s7, s5]
+   - The receipts.py NoResultFound errors (about 25 per 15 min) started before the config change and are low-volume background noise, not the cause of the alert.  [s2]
+  Fix: Restore PAYMENT_TIMEOUT_MS on shop_api to its baseline of 5000 (or a value comfortably above payment_stub's roughly 50-100ms latency) and redeploy or restart shop_api so the new value takes effect. Confirm the 5xx ratio falls below 5% and the payment ReadTimeout count drops to zero. Add config validation that rejects timeouts under about 500ms. Separately, look into the low-rate receipts.py NoResultFound errors.
+
+  Full report: .data/reports/incident-0387-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 22 ...
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.235
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.207
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.163
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.124
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.083
+  waiting for clean state: shop_api error ratio 0.031
+clean
+  -> config_error vs config_error: CORRECT
+
+===== [20/24] scenario 19 repeat 1 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 19
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 19 (Cache outage): redis container stopped
+  injected in 1s; waiting up to 480s for ['ContainerDown', 'HighErrorRate']
+PASS: scenario 19 alert after 61s seen=['ContainerDown']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 19 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ ContainerDown on redis (critical): redis is not running
+  eval fence: tools see nothing before 01:51:45 (the chaos run's baseline start)
+  ✓ s1 container_stats(service="redis") 177ms
+  ✓ s2 query_metrics(promql="cache_hit_ratio{service=\"shop_api\"}", minutes=15) 2ms
+  ✓ s3 query_metrics(promql="http_error_ratio{service=\"shop_api\"}", minutes=15) 2ms
+  ✗ s4 top_errors(service=null, minutes=15, limit=8) 8006ms  backend unreachable: ReadTimeout
+    💭 Redis was stopped by a SIGTERM about a minute before the alert, and shop_api's error ratio jumped from about 1% to 51% in the same window. Next I'll check what 
+  ✓ s5 recent_changes(since_minutes=30) 46ms
+  ✗ s6 top_errors(service="shop_api", minutes=15, limit=8) 8008ms  backend unreachable: ReadTimeout
+  ✓ s7 query_metrics(promql="db_queries_per_request{service=\"shop_api\"}", minutes=15) 14ms
+  ✓ s8 query_metrics(promql="http_latency_p95_seconds{service=\"shop_api\"}", minutes=15) 8ms
+    💭 The error ratio is climbing, but p95 latency is flat near 0.1s, which is unusual. I'll check shop_api's logs, Postgres load, and the Redis client code path.
+  ✓ s9 search_logs(service="shop_api", level=null, contains=null, minutes=15, limit=15) 23ms
+  ✓ s10 db_activity() 51ms
+  ✓ s11 container_stats(service="shop_api") 1523ms
+CORRECT  expected=cache_failure got=cache_failure conf=0.90 steps=11 ttd=30.1s
+
+  Summary: The redis container was stopped (SIGTERM, clean exit code 0) about a minute before the alert, with no deploy or config change in the window. shop_api cannot reach redis:6379, so cache-backed endpoints such as GET /products/{sku} return 500, and the shop_api error ratio rose from about 1% to 51% within about a minute. Postgres is healthy and shows no load or lock problem.
+   - The redis container is not running; its last exit was a kill with signal 15 and exit code 0, not an OOM kill.  [s1]
+   - shop_api errors are redis.exceptions.ConnectionError (Name or service not known for redis:6379), and GET /products/{sku} returns 500 on those requests.  [s9]
+   - shop_api's 5xx ratio rose from about 0.01 to 0.51 between 06:53:15 and 06:54:15, starting when redis went down.  [s3, s1]
+   - Postgres is not the bottleneck: 10 of 100 connections are in use, with no blocking locks and only one idle-in-transaction session.  [s10]
+   - No deploys or config changes were recorded in the last 30 minutes, so this is not a bad_deploy.  [s5]
+  Fix: Get approval to restart the redis container and confirm it reaches running and answers PING. Find out why it was stopped (the SIGTERM suggests a manual or orchestrator stop) and add a restart policy so it recovers automatically. Check the shop_api error ratio returns to baseline and that the cache hit ratio recovers, which will reduce Postgres load from read-through misses. Consider making shop_api fall back to the database when redis is unavailable, rather than returning 500.
+
+  Full report: .data/reports/incident-0388-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 19 ...
+  waiting for clean state: alert firing: HighErrorRate shop_api; alert firing: ContainerDown redis; shop_api error ratio 0.515
+  waiting for clean state: alert firing: HighErrorRate shop_api; alert firing: ContainerDown redis; shop_api error ratio 0.498
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.396
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.315
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.228
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.120
+clean
+  -> cache_failure vs cache_failure: CORRECT
+
+===== [21/24] scenario 24 repeat 3 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 24
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 24 (Rotated credential): payment provider rotated its API key; shop_api sends the old one
+  injected in 3s; waiting up to 480s for ['HighErrorRate']
+PASS: scenario 24 alert after 81s seen=['HighErrorRate']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 24 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ HighErrorRate on shop_api (critical): 5xx ratio above 5% for 1m on shop_api
+  eval fence: tools see nothing before 01:56:26 (the chaos run's baseline start)
+  ✓ s1 list_alerts() 9ms
+  ✓ s2 top_errors(service="shop_api", minutes=15, limit=8) 166ms
+  ✓ s3 query_metrics(promql="http_error_ratio{service=\"shop_api\"}", minutes=15) 5ms
+    💭 The dominant error is 401 Unauthorized from shop_api calling payment_stub, which points at credentials. I'll check the payment_stub side, recent changes, and sh
+  ✓ s4 top_errors(service="payment_stub", minutes=15, limit=8) 26ms
+  ✓ s5 recent_changes(since_minutes=120) 26ms
+  ✓ s6 get_config(service="shop_api") 189ms
+    💭 The rotation at 06:57:56 lines up with the first 401 at 06:57:59. shop_api's config shows no change, so it probably still holds the old key. I'll confirm on the
+  ✓ s7 search_logs(service="payment_stub", level=null, contains="api key", minutes=5, limit=5) 14ms
+  ✓ s8 get_stack_trace(signature="sqlalchemy.exc.NoResultFound: No row was found when one was requir...) 79ms
+CORRECT  expected=auth_failure got=auth_failure conf=0.90 steps=8 ttd=12.3s
+
+  Summary: payment_stub's PAYMENT_API_KEY was rotated at 06:57:56, and shop_api's payment calls started returning 401 Unauthorized three seconds later, so checkout charges are failing. The 5xx ratio rose from about 1.4% to 22% over the following minutes, which is the HighErrorRate alert. The receipts NoResultFound errors are a much smaller secondary issue.
+   - payment_stub's PAYMENT_API_KEY was rotated at 06:57:56, about 1.4 minutes before the alert.  [s5]
+   - shop_api received 310 '401 Unauthorized' responses from payment_stub /charge in 15 minutes, first seen at 06:57:59, which is the dominant error signature.  [s2]
+   - payment_stub logs show it rejecting POST /charge with 'invalid api key (401)' at 06:59:26.  [s7]
+   - The shop_api 5xx ratio rose from about 1.2-1.6% before 06:58 to 22% by 06:59, matching the start of the 401s.  [s3]
+   - shop_api's config shows no change versus baseline, so it still likely holds the old PAYMENT_API_KEY that was rotated on payment_stub.  [s6]
+   - The 35 NoResultFound errors in render_receipt are a much smaller, separate signal and do not explain the spike.  [s2, s8]
+  Fix: Update shop_api's PAYMENT_API_KEY to the newly rotated value from the secret store, then roll out shop_api so the new key loads. Confirm 401s stop in payment_stub logs and the shop_api 5xx ratio returns below 5%. Separately, have security coordinate future rotations so both services switch over together. Investigate the render_receipt NoResultFound errors as a follow-up.
+
+  Full report: .data/reports/incident-0389-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 24 ...
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.235
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.218
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.181
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.131
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.092
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.044
+clean
+  -> auth_failure vs auth_failure: CORRECT
+
+===== [22/24] scenario 24 repeat 2 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 24
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 24 (Rotated credential): payment provider rotated its API key; shop_api sends the old one
+  injected in 3s; waiting up to 480s for ['HighErrorRate']
+PASS: scenario 24 alert after 81s seen=['HighErrorRate']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 24 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ HighErrorRate on shop_api (critical): 5xx ratio above 5% for 1m on shop_api
+  eval fence: tools see nothing before 02:01:13 (the chaos run's baseline start)
+  ✓ s1 list_alerts() 34ms
+  ✓ s2 query_metrics(promql="http_error_ratio{service=\"shop_api\"}", minutes=15) 11ms
+  ✓ s3 top_errors(service="shop_api", minutes=15, limit=8) 190ms
+  ✓ s4 top_errors(service="payment_stub", minutes=15, limit=8) 33ms
+    💭 The main signal is 401s from shop_api calling payment_stub, starting around 07:02:46, while payment_stub itself logs no errors. I'll check recent config changes
+  ✓ s5 recent_changes(since_minutes=60) 39ms
+  ✓ s6 get_config(service="shop_api") 187ms
+  ✓ s7 get_config(service="payment_stub") 30ms
+  ✓ s8 search_logs(service="payment_stub", level=null, contains=null, minutes=15, limit=15) 5ms
+CORRECT  expected=auth_failure got=auth_failure conf=0.90 steps=8 ttd=10.9s
+
+  Summary: payment_stub's PAYMENT_API_KEY was rotated at 07:02:43, and shop_api still sends the old key, so every POST /charge from checkout gets a 401. The 401s begin at 07:02:46 and push shop_api's 5xx ratio from about 1% to about 21% in roughly a minute. Checkout payments are failing for customers until shop_api receives the new key.
+   - PAYMENT_API_KEY on payment_stub was rotated at 07:02:43, about 1.4 minutes before the alert.  [s5]
+   - shop_api's httpx calls to payment_stub /charge fail with 401 Unauthorized, 287 times in 15 minutes, first seen 07:02:46.  [s3]
+   - payment_stub logs 'rejected POST /charge: invalid api key (401)' on each request, showing it rejects the key shop_api sends.  [s8]
+   - shop_api's 5xx ratio rose from about 1.1% to about 21% starting at 07:02:58, matching the 401 onset.  [s2]
+   - payment_stub's config differs from baseline only in PAYMENT_API_KEY, while shop_api's config shows no changes, so shop_api still holds the old key.  [s6, s7]
+   - payment_stub itself logged no errors, so the fault is the key mismatch and not payment_stub being down.  [s4]
+  Fix: Distribute the newly rotated PAYMENT_API_KEY to shop_api (update its secret/env and restart or reload shop_api so it picks up the value). Confirm that 401s stop in payment_stub logs and that the shop_api 5xx ratio returns below 5%. Going forward, roll out rotated keys to callers before or alongside revoking the old key, or accept both keys during the transition window. The NoResultFound in receipts.py (about 25 errors) predates the rotation and is low-volume background noise, not part of this incident.
+
+  Full report: .data/reports/incident-0390-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 24 ...
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.222
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.228
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.173
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.128
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.082
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.050
+clean
+  -> auth_failure vs auth_failure: CORRECT
+
+===== [23/24] scenario 24 repeat 1 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 24
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 24 (Rotated credential): payment provider rotated its API key; shop_api sends the old one
+  injected in 3s; waiting up to 480s for ['HighErrorRate']
+PASS: scenario 24 alert after 85s seen=['HighErrorRate']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 24 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ HighErrorRate on shop_api (critical): 5xx ratio above 5% for 1m on shop_api
+  eval fence: tools see nothing before 02:05:59 (the chaos run's baseline start)
+  ✓ s1 list_alerts() 33ms
+  ✓ s2 top_errors(service="shop_api", minutes=15, limit=8) 1035ms
+  ✓ s3 query_metrics(promql="http_error_ratio{service=\"shop_api\"}", minutes=15) 39ms
+    💭 The 401s from payment_stub account for most of the errors. Next I'll check the payment_stub side, recent changes, and shop_api's config.
+  ✓ s4 top_errors(service="payment_stub", minutes=15, limit=8) 394ms
+  ✓ s5 recent_changes(since_minutes=120) 183ms
+  ✓ s6 get_config(service="shop_api") 385ms
+    💭 The payment_stub key was rotated at 07:07:29, and shop_api's 401s start at 07:07:32. I'll confirm the auth rejection on the payment_stub side and check the seco
+  ✓ s7 search_logs(service="payment_stub", level=null, contains=null, minutes=10, limit=10) 22ms
+  ✓ s8 get_stack_trace(signature="sqlalchemy.exc.NoResultFound: No row was found when one was requir...) 118ms
+CORRECT  expected=auth_failure got=auth_failure conf=0.90 steps=8 ttd=13.5s
+
+  Summary: The PAYMENT_API_KEY on payment_stub was rotated at 07:07:29, but shop_api still sends the old key. Every /checkout charge call from shop_api to payment_stub now gets a 401, and that accounts for 287 of 337 errors and pushes the 5xx ratio to about 24%. The impact is failed checkouts, and the error ratio is still climbing.
+   - payment_stub rotated PAYMENT_API_KEY at 07:07:29, about 1.5 minutes before the alert.  [s5]
+   - shop_api's top error is httpx 401 Unauthorized from payment_stub /charge, 287 occurrences starting 07:07:32.  [s2]
+   - payment_stub logs show POST /charge returning 401 with 'invalid api key' warnings, confirming it rejects the key shop_api sends.  [s7]
+   - The 5xx ratio on shop_api rose from about 1.3% to about 24% between 07:07:44 and 07:08:59, matching the rotation time.  [s3]
+   - shop_api config shows no changes vs baseline, so the mismatch is on the key value, not an env change in shop_api.  [s6]
+   - A secondary issue is 32 NoResultFound errors in render_receipt, which began at 07:06:01 before the rotation and is not explained by it.  [s2, s8]
+  Fix: Update shop_api's PAYMENT_API_KEY to match the value rotated on payment_stub (distribute the new secret through the normal secret store), then restart or reload shop_api so it picks up the new value. Verify with the 401 count on payment_stub dropping to zero and the shop_api 5xx ratio falling below 1%. Separately, investigate the render_receipt NoResultFound errors (missing receipt rows for some orders), which predate this incident.
+
+  Full report: .data/reports/incident-0391-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 24 ...
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.241; shop_api p95 1.45s
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.231; shop_api p95 1.42s
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.152; shop_api p95 0.85s
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.114
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.091
+  waiting for clean state: shop_api error ratio 0.046
+clean
+  -> auth_failure vs auth_failure: CORRECT
+
+===== [24/24] scenario 22 repeat 2 =====
+$ ./.venv/bin/python -m chaos revert all
+clean
+$ ./.venv/bin/python -m chaos run 22
+settling 120s so the agent's baseline window holds only normal traffic ...
+injecting 22 (Timeout too low): PAYMENT_TIMEOUT_MS changed to 30 ms (payments take ~40 ms)
+  injected in 5s; waiting up to 480s for ['HighErrorRate']
+PASS: scenario 22 alert after 86s seen=['HighErrorRate']
+$ ./.venv/bin/python -m diag live --llm anthropic --expect 22 --record .data/eval/heldout-real-v1.tmp.jsonl --wait 120
+
+▶ HighErrorRate on shop_api (critical): 5xx ratio above 5% for 1m on shop_api
+  eval fence: tools see nothing before 02:10:59 (the chaos run's baseline start)
+  ✓ s1 list_alerts() 8ms
+  ✓ s2 top_errors(service="shop_api", minutes=15, limit=8) 301ms
+  ✓ s3 query_metrics(promql="http_error_ratio{service=\"shop_api\"}", minutes=15) 8ms
+    💭 The dominant error is `httpx.ReadTimeout` on the payment charge call. Next I'll check the payment_stub side and the outbound latency.
+  ✓ s4 top_errors(service="payment_stub", minutes=15, limit=8) 35ms
+  ✓ s5 query_metrics(promql="outbound_latency_p95_seconds{service=\"shop_api\"}", minutes=15) 3ms
+  ✓ s6 container_stats(service="payment_stub") 1561ms
+    💭 Payment_stub reports no errors and low CPU, yet shop_api logs ReadTimeouts while its outbound p95 to payment_stub is only about 0.09s. That mismatch needs a clo
+  ✓ s7 get_trace(trace_id="d9db1cb8afa062ee25702fc7448720f2") 134ms
+  ✓ s8 read_source(path="services/shop_api/app/payment_client.py", start_line=1, end_line=40, sh...) 120ms
+  ✓ s9 get_config(service="shop_api") 48ms
+    💭 The example trace is inconsistent: the payment_stub span returned 200 in about 52ms, yet the shop_api client span is marked error. I'll check slow traces, recen
+  ✓ s10 find_slow_traces(service="shop_api", min_duration_ms=1000.0, minutes=15, limit=5) 140ms
+  ✓ s11 recent_changes(since_minutes=60) 29ms
+  ✓ s12 search_logs(service="payment_stub", level=null, contains=null, minutes=15, limit=15) 27ms
+CORRECT  expected=config_error got=config_error conf=0.80 steps=12 ttd=17.3s
+
+  Summary: A config change at 07:12:29 lowered shop_api's PAYMENT_TIMEOUT_MS from 5000 to 30 ms, about 4 seconds before the errors began. Payment calls that normally take about 44 ms now hit the 30 ms client timeout, so POST /checkout returns 500 and the 5xx ratio climbs from about 1.5% to about 26%. payment_stub itself is healthy and returns 200 for the same charges, so the fault is in shop_api's client configuration.
+   - The dominant error is httpx.ReadTimeout at payment_client.py:17 in charge, 354 occurrences starting 07:12:33.  [s2]
+   - A config change at 07:12:29 set PAYMENT_TIMEOUT_MS from 5000 to 30, about 4 seconds before the first timeout.  [s11]
+   - payment_client.py reads the timeout from PAYMENT_TIMEOUT_MS and applies it to the httpx client on every charge call.  [s8]
+   - payment_stub returns POST /charge 200 in about 43-44 ms and logs no errors in the window, so the dependency is healthy and fast.  [s4, s12]
+   - In the sampled failing trace, the payment_stub span completed with 200 in about 52 ms while the shop_api client span was marked error, so the client gave up before the response was processed.  [s7]
+   - The HTTP error ratio rose from about 0.015 to 0.266 between 07:12:44 and 07:13:59, matching the timeout onset.  [s3]
+  Fix: Restore PAYMENT_TIMEOUT_MS to its previous value of 5000 (or a value comfortably above the roughly 50 ms normal payment latency) on shop_api and redeploy or restart it. Add validation that rejects timeouts below a sane minimum, such as 500 ms. Watch the HighErrorRate and payment ReadTimeout counts return to baseline. Separately, investigate the secondary NoResultFound in receipts.py:11, which is a small volume (31 errors) and not part of this incident.
+
+  Full report: .data/reports/incident-0392-live.md
+$ ./.venv/bin/python -m chaos revert all
+reverting scenario 22 ...
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.253
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.240
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.182
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.130
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.087
+  waiting for clean state: alert firing: HighErrorRate shop_api; shop_api error ratio 0.051
+clean
+  -> config_error vs config_error: CORRECT
+
+finished in 2.1 h; results in .data/eval/heldout-real-v1.jsonl
+
+ id expected              right  wrong answers                       alert  conf steps   ttd
+  5 deadlock               3/3   -                                    3/3   0.85     9  15.5
+ 19 cache_failure          3/3   -                                    3/3   0.85    11  29.4
+ 22 config_error           3/3   -                                    3/3   0.85    11  15.8
+ 23 bad_migration          3/3   -                                    3/3   0.85    12  34.9
+ 24 auth_failure           3/3   -                                    3/3   0.90     8  12.3
+ 25 feature_flag           3/3   -                                    3/3   0.70    12  17.4
+ 26 resource_limit         2/3   config_error                         3/3   0.90     7  13.3
+ 27 resource_limit         0/3   db_pool_exhaustion                   3/3   0.60    12  15.3
+
+Failure runs: 24   top-1 20/24 = 83%   top-3 88%   confident wrong (>=0.7) 1
+Controls: 0 runs, false incidents 0
+Alert detection: 24/24   clean revert: 24/24
+Median: 15.8s to diagnosis, 11 tool calls, 40196 input tokens, $0.0535 per investigation
+Write actions requested (approval only, none executed): 0

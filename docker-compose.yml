@@ -1,0 +1,162 @@
+# Target system + telemetry for the diagnostics agent. Local only.
+#   docker compose up -d --build            # everything except seed and load
+#   docker compose run --rm seed            # 1M orders (about a minute)
+#   docker compose --profile load up -d loadgen
+name: shop
+
+x-app: &app
+  image: shop-stack:dev
+  build:
+    context: .
+    dockerfile: services/Dockerfile
+  restart: unless-stopped
+  environment: &appenv
+    DATABASE_URL: postgresql+asyncpg://shop:shop@postgres:5432/shop
+    REDIS_URL: redis://redis:6379
+    PAYMENT_URL: http://payment_stub:8081
+    PAYMENT_API_KEY: pk_live_a1b2c3
+    SHOP_API_URL: http://shop_api:8080
+    INTERNAL_JWT_SECRET: dev-internal-secret
+    OTLP_ENDPOINT: http://tempo:4318
+    LOKI_URL: http://loki:3100
+    FLAG_FILE: /flags/flags.json
+  volumes:
+    - ./flags:/flags
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment: {POSTGRES_USER: shop, POSTGRES_PASSWORD: shop, POSTGRES_DB: shop}
+    command: >
+      postgres -c shared_preload_libraries=pg_stat_statements -c max_connections=100
+      -c track_io_timing=on -c log_lock_waits=on -c deadlock_timeout=1s
+      -c max_parallel_workers_per_gather=0
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shop -d shop"]
+      interval: 3s
+      retries: 20
+    mem_limit: 1g
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    ports: ["6379:6379"]
+    mem_limit: 256m
+
+  migrate:
+    <<: *app
+    restart: "no"
+    command: alembic -c services/shop_api/alembic.ini upgrade head
+    depends_on: {postgres: {condition: service_healthy}}
+
+  seed:
+    <<: *app
+    restart: "no"
+    profiles: ["seed"]
+    command: python -m scripts.seed --orders 1000000
+    depends_on: {migrate: {condition: service_completed_successfully}}
+
+  shop_api:
+    <<: *app
+    command: uvicorn services.shop_api.app.main:app --host 0.0.0.0 --port 8080
+    environment:
+      <<: *appenv
+      SERVICE_NAME: shop_api
+      GIT_SHA: ${GIT_SHA:-a41f9c3}                                  # chaos.deploy sets this
+      PAYMENT_API_KEY: ${CHAOS_PAYMENT_API_KEY:-pk_live_a1b2c3}      # chaos sets this for the broken-env scenario
+    env_file:
+      - {path: .chaos/shop_api.env, required: false}               # chaos overrides, absent when healthy
+    ports: ["8080:8080"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_started}
+    mem_limit: ${SHOP_API_MEM:-512m}                               # chaos: memory limit too low
+    cpus: ${SHOP_API_CPUS:-2.0}                                    # chaos: CPU throttling
+
+  payment_stub:
+    <<: *app
+    command: uvicorn services.payment_stub.app.main:app --host 0.0.0.0 --port 8081
+    environment:
+      <<: *appenv
+      SERVICE_NAME: payment_stub
+      PAYMENT_API_KEY: ${CHAOS_STUB_API_KEY:-pk_live_a1b2c3}         # chaos: provider rotated the key
+    ports: ["8081:8081"]
+    depends_on: {migrate: {condition: service_completed_successfully}}
+    mem_limit: 256m
+    cpus: 1.0
+
+  worker:
+    <<: *app
+    command: uvicorn services.worker.app.main:app --host 0.0.0.0 --port 8082
+    environment:
+      <<: *appenv
+      SERVICE_NAME: worker
+    depends_on: {migrate: {condition: service_completed_successfully}}
+    mem_limit: 256m
+    cpus: 1.0
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=6h"]
+    volumes:
+      - ./infra/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/rules.yml:/etc/prometheus/rules.yml:ro
+    ports: ["9090:9090"]
+
+  loki:
+    image: grafana/loki:3.2.0
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes: ["./infra/loki.yaml:/etc/loki/loki.yaml:ro"]
+    ports: ["3100:3100"]
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    restart: unless-stopped
+    user: root
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes: ["./infra/tempo.yaml:/etc/tempo.yaml:ro"]
+    ports: ["3200:3200"]
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    restart: unless-stopped
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes: ["./infra/grafana/datasources.yml:/etc/grafana/provisioning/datasources/ds.yml:ro"]
+    ports: ["3000:3000"]
+
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:0.2.0
+    restart: unless-stopped
+    environment: {CONTAINERS: 1, EVENTS: 1, POST: 0}
+    ports: ["127.0.0.1:2375:2375"]   # read-only Docker API for the agent's RealBackend (GET only)
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock:ro"]
+
+  stack_exporter:
+    build:
+      context: .
+      dockerfile: infra/exporter/Dockerfile
+    restart: unless-stopped
+    environment:
+      DOCKER_HOST: tcp://docker-proxy:2375
+      PG_DSN: postgresql://shop:shop@postgres:5432/shop
+      COMPOSE_PROJECT: shop
+    depends_on: [docker-proxy, postgres]
+
+  loadgen:
+    image: locustio/locust:2.32.0
+    profiles: ["load"]
+    command: -f /mnt/locustfile.py --headless -u 15 -r 5 --host http://shop_api:8080
+    volumes: ["./loadgen/locustfile.py:/mnt/locustfile.py:ro"]
+    depends_on: [shop_api]
+
+volumes:
+  pgdata: {}   # persistent: data survives container stop/start (chaos stops Postgres in the "database down" runs)

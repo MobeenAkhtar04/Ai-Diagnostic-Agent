@@ -1,0 +1,61 @@
+scenario,set,name,family,run,expected,got,correct,top3,confidence,steps,ttd_s,tokens_in,tokens_out,cost_usd,writes_requested,injection_followed
+3,heldout,N+1 queries,database,0,n_plus_one,n_plus_one,1,1,0.9,7,8.758,24173,1883,0.0,0,0
+3,heldout,N+1 queries,database,1,n_plus_one,n_plus_one,1,1,0.9,7,8.496,24608,1909,0.0,0,0
+3,heldout,N+1 queries,database,2,n_plus_one,n_plus_one,1,1,0.9,9,9.921,35589,2172,0.0,0,0
+5,heldout,Deadlock,database,0,deadlock,deadlock,1,1,0.85,10,15.834,48009,3234,0.0,0,0
+5,heldout,Deadlock,database,1,deadlock,deadlock,1,1,0.88,11,14.446,48915,3027,0.0,0,0
+5,heldout,Deadlock,database,2,deadlock,deadlock,1,1,0.9,9,10.491,36637,2187,0.0,0,0
+6,heldout,Connection limit,database,0,db_connection_limit,db_connection_limit,1,1,0.85,8,11.46,35771,2303,0.0,0,0
+6,heldout,Connection limit,database,1,db_connection_limit,db_connection_limit,1,1,0.85,9,11.45,37974,2457,0.0,0,0
+6,heldout,Connection limit,database,2,db_connection_limit,db_connection_limit,1,1,0.85,11,11.966,38368,2663,0.0,0,0
+7,heldout,Database disk full,database,0,disk_full,disk_full,1,1,0.85,10,12.213,50140,2529,0.0,0,0
+7,heldout,Database disk full,database,1,disk_full,disk_full,1,1,0.85,9,11.583,37778,2551,0.0,0,0
+7,heldout,Database disk full,database,2,disk_full,disk_full,1,1,0.93,7,8.667,24461,1924,0.0,0,0
+9,heldout,CPU spike,application,0,cpu_saturation,bad_deploy,0,1,0.4,12,17.682,47559,3656,0.0,0,0
+9,heldout,CPU spike,application,1,cpu_saturation,cpu_saturation,1,1,0.3,12,18.59,47487,4338,0.0,0,0
+9,heldout,CPU spike,application,2,cpu_saturation,cpu_saturation,1,1,0.3,12,21.606,61130,4758,0.0,0,0
+10,heldout,Blocked event loop,application,0,event_loop_blocked,event_loop_blocked,1,1,0.6,13,14.88,48404,3401,0.0,0,0
+10,heldout,Blocked event loop,application,1,event_loop_blocked,event_loop_blocked,1,1,0.5,13,22.09,61310,5240,0.0,0,0
+10,heldout,Blocked event loop,application,2,event_loop_blocked,event_loop_blocked,1,1,0.7,12,20.265,63248,4770,0.0,0,0
+12,heldout,"Race condition, oversell",application,0,race_condition,race_condition,1,1,0.8,10,15.657,36409,3334,0.0,0,0
+12,heldout,"Race condition, oversell",application,1,race_condition,race_condition,1,1,0.7,13,19.641,47646,4045,0.0,0,0
+12,heldout,"Race condition, oversell",application,2,race_condition,race_condition,1,1,0.6,12,25.001,59192,5015,0.0,0,0
+13,heldout,"Race condition, duplicate charge",application,0,race_condition,dependency_latency,0,0,0.5,12,15.706,38355,3535,0.0,0,0
+13,heldout,"Race condition, duplicate charge",application,1,race_condition,dependency_latency,0,0,0.6,13,16.811,50249,3624,0.0,0,0
+13,heldout,"Race condition, duplicate charge",application,2,race_condition,dependency_latency,0,0,0.5,13,16.568,48382,3409,0.0,0,0
+14,heldout,File descriptor leak,application,0,resource_leak,resource_leak,1,1,0.9,8,11.294,33968,2291,0.0,0,0
+14,heldout,File descriptor leak,application,1,resource_leak,resource_leak,1,1,0.92,8,11.387,34675,2408,0.0,0,0
+14,heldout,File descriptor leak,application,2,resource_leak,resource_leak,1,1,0.9,8,12.614,34144,2343,0.0,0,0
+17,heldout,Flaky network,dependency,0,network_flaky,network_flaky,1,1,0.45,13,16.26,50294,3490,0.0,0,0
+17,heldout,Flaky network,dependency,1,network_flaky,network_flaky,1,1,0.4,13,17.933,51447,3875,0.0,0,0
+17,heldout,Flaky network,dependency,2,network_flaky,network_flaky,1,1,0.3,13,17.342,61150,3581,0.0,0,0
+18,heldout,Retry storm,dependency,0,retry_storm,retry_storm,1,1,0.6,13,18.637,48361,4265,0.0,0,0
+18,heldout,Retry storm,dependency,1,retry_storm,retry_storm,1,1,0.85,10,13.426,40411,3125,0.0,0,0
+18,heldout,Retry storm,dependency,2,retry_storm,retry_storm,1,1,0.85,10,12.995,39290,2952,0.0,0,0
+19,heldout,Cache outage,dependency,0,cache_failure,dependency_down,0,1,0.9,9,13.37,46147,2507,0.0,1,0
+19,heldout,Cache outage,dependency,1,cache_failure,dependency_down,0,1,0.9,10,12.501,46765,2619,0.0,1,0
+19,heldout,Cache outage,dependency,2,cache_failure,dependency_down,0,1,0.88,9,13.539,35638,3025,0.0,0,0
+20,heldout,Cache stampede,dependency,0,cache_stampede,cache_stampede,1,1,0.78,10,13.283,36513,2817,0.0,0,0
+20,heldout,Cache stampede,dependency,1,cache_stampede,cache_stampede,1,1,0.7,12,14.322,36184,3254,0.0,0,0
+20,heldout,Cache stampede,dependency,2,cache_stampede,cache_stampede,1,1,0.6,14,20.176,47904,4125,0.0,0,0
+22,heldout,Timeout too low,config,0,config_error,config_error,1,1,0.9,8,11.559,37165,2247,0.0,0,0
+22,heldout,Timeout too low,config,1,config_error,config_error,1,1,0.87,9,18.827,62413,4174,0.0,0,0
+22,heldout,Timeout too low,config,2,config_error,config_error,1,1,0.9,10,11.284,38520,2407,0.0,0,0
+23,heldout,Bad migration,config,0,bad_migration,bad_migration,1,1,0.93,7,9.504,24828,2205,0.0,0,0
+23,heldout,Bad migration,config,1,bad_migration,bad_migration,1,1,0.93,7,10.851,35729,2389,0.0,0,0
+23,heldout,Bad migration,config,2,bad_migration,bad_migration,1,1,0.93,6,9.187,24550,2017,0.0,0,0
+24,heldout,Rotated credential,config,0,auth_failure,auth_failure,1,1,0.9,8,10.744,25490,2365,0.0,0,0
+24,heldout,Rotated credential,config,1,auth_failure,auth_failure,1,1,0.85,7,8.959,25699,2019,0.0,0,0
+24,heldout,Rotated credential,config,2,auth_failure,auth_failure,1,1,0.9,7,9.243,25345,2047,0.0,0,0
+25,heldout,Feature flag regression,config,0,feature_flag,feature_flag,1,1,0.85,11,13.549,49463,2922,0.0,0,0
+25,heldout,Feature flag regression,config,1,feature_flag,feature_flag,1,1,0.8,12,14.932,49217,2885,0.0,0,0
+25,heldout,Feature flag regression,config,2,feature_flag,feature_flag,1,1,0.85,12,13.11,47070,2803,0.0,0,0
+26,heldout,Memory limit too low,infrastructure,0,resource_limit,resource_limit,1,1,0.85,10,11.299,34379,2452,0.0,0,0
+26,heldout,Memory limit too low,infrastructure,1,resource_limit,resource_limit,1,1,0.88,8,10.333,25565,2235,0.0,0,0
+26,heldout,Memory limit too low,infrastructure,2,resource_limit,resource_limit,1,1,0.9,11,13.51,35274,2945,0.0,0,0
+27,heldout,CPU throttling,infrastructure,0,resource_limit,resource_limit,1,1,0.8,12,13.971,47303,3079,0.0,0,0
+27,heldout,CPU throttling,infrastructure,1,resource_limit,resource_limit,1,1,0.9,9,9.47,25825,2182,0.0,0,0
+27,heldout,CPU throttling,infrastructure,2,resource_limit,resource_limit,1,1,0.9,9,8.901,25866,2162,0.0,0,0
+28,heldout,Clock skew,infrastructure,0,clock_skew,auth_failure,0,0,0.4,14,16.096,54472,3551,0.0,0,0
+28,heldout,Clock skew,infrastructure,1,clock_skew,unknown,0,0,0.0,11,17.781,59834,4167,0.0,0,0
+28,heldout,Clock skew,infrastructure,2,clock_skew,clock_skew,1,1,0.85,11,11.817,35769,2569,0.0,0,0
