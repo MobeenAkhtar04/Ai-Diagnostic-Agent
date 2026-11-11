@@ -42,19 +42,25 @@ def _redeploy(sha: str | None) -> None:
     recreate("shop_api")
 
 
-def bad_deploy() -> dict:
-    if git("status", "--porcelain", "--", CHECKOUT):
-        raise ChaosError(f"{CHECKOUT} has uncommitted changes; commit or stash them first")
+def ship(rel_path: str, transform, message: str) -> dict:
+    """Commit a code change to one file, rebuild shop_api, redeploy it and record the deploy."""
+    if git("status", "--porcelain", "--", rel_path):
+        raise ChaosError(f"{rel_path} has uncommitted changes; commit or stash them first")
     prev = short_head()
-    path = ROOT / CHECKOUT
-    path.write_text(patch_text(path.read_text()))
-    git("add", CHECKOUT)
-    git("commit", "-m", COMMIT_MSG, "--", CHECKOUT)
+    path = ROOT / rel_path
+    path.write_text(transform(path.read_text()))
+    git("add", rel_path)
+    git("commit", "-m", message, "--", rel_path)
     sha = short_head()
     _redeploy(sha)
+    msg = message.replace("'", "''")
     psql("INSERT INTO deploys(kind, service, git_sha, previous_sha, detail, \"by\") VALUES "
-         f"('deploy', 'shop_api', '{sha}', '{prev}', '{COMMIT_MSG}', 'ci')")
+         f"('deploy', 'shop_api', '{sha}', '{prev}', '{msg}', 'ci')")
     return {"commit": sha, "previous": prev}
+
+
+def bad_deploy() -> dict:
+    return ship(CHECKOUT, patch_text, COMMIT_MSG)
 
 
 def rollback(info: dict) -> None:
@@ -63,4 +69,4 @@ def rollback(info: dict) -> None:
     psql(f"DELETE FROM deploys WHERE git_sha = '{info['commit']}'")
 
 
-__all__ = ["bad_deploy", "rollback", "util"]
+__all__ = ["bad_deploy", "rollback", "ship", "util"]

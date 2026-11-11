@@ -63,6 +63,15 @@ def _noise():
     return "GET", f"/receipts/{random.randint(900000000, 999999999)}", None
 
 
+def _mixed():
+    r = random.random()
+    if r < 0.5:
+        return "GET", f"/products/SKU-{random.randint(1, 200)}", None
+    if r < 0.75:
+        return "GET", f"/orders?customer_id={_cust()}", None
+    return _checkout(f"SKU-{random.randint(1, 200)}")()
+
+
 # name -> (concurrency, request factory, sleep between requests per worker)
 PROFILES = {
     "receipts": (25, lambda: ("GET", f"/receipts/{random.randint(1, 200000)}", None), 0.0),
@@ -73,6 +82,9 @@ PROFILES = {
     "bundle": (6, _bundle, 0.05),
     "checkout": (8, lambda: _checkout(f"SKU-{random.randint(3, 200)}")(), 0.2),
     "noise": (2, _noise, 1.0),
+    "orders_heavy": (40, lambda: ("GET", f"/orders?customer_id={_cust()}", None), 0.0),
+    "mixed": (20, _mixed, 0.15),
+    "receipts_slow": (3, lambda: ("GET", f"/receipts/{random.randint(1, 200000)}", None), 0.2),
 }
 
 

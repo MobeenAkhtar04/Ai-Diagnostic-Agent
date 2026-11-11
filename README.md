@@ -32,6 +32,18 @@ Median 15.8 s to a diagnosis, 11 tool calls, about $0.05 per investigation.
 
 The CPU-throttling failures were a real agent gap: it saw a full DB connection pool and an idle database and called the pool the cause, without checking the slow service's own CPU throttle. After seeing that, I added one prompt rule and tightened one taxonomy definition. A rerun of those faults went 12/12, but **those faults were then tuned on, so 12/12 is not a held-out number**; the 83% above is the clean one. A fresh set of held-out faults is next.
 
+**Second held-out batch: four code-level faults, each a real git commit that is rebuilt and redeployed (never tuned on): 75% top-1 (9 of 12 runs), top-3 100%.**
+All 12 alerts detected, all 12 reverts clean, median 14 s, about $0.05 per investigation.
+
+| Injected fault | Correct |
+| --- | --- |
+| N+1 queries (`/orders` runs about 100 queries a request) | 3/3 |
+| Blocked event loop (synchronous HTTP call inside an async handler) | 3/3 |
+| File-descriptor leak (handle kept open per request until the 1024 limit) | 3/3 |
+| CPU hog (backtracking regex in checkout, CPU quota pinned) | **0/3** |
+
+The CPU-hog misses were labeled `bad_deploy` instead of `cpu_saturation`. The agent found the offending commit, named the nested-quantifier regex as the cause and proposed the right rollback ([example report](docs/example-reports/incident-0422-live.md)); it chose the trigger (the deploy) over the mechanism (CPU saturation). I count it as wrong and have not relabeled it or tuned on it. Across both batches the clean first-run result is **29 of 36 runs (81%) over 12 distinct faults**.
+
 Earlier, on the 10 original scenarios (tuned on while building the stack): 82% top-1 (33 of 40), top-3 100%, and 0 false incidents in 10 runs with no fault injected.
 
 ### Simulated stack (28 failure scenarios, 3 runs each)
@@ -115,7 +127,7 @@ tests/            gateway, validator, approvals, injection, adapters, baselines,
 ## Limitations
 
 - One model family (Claude Haiku 5.5). No comparison yet against other models or a local one.
-- 8 held-out faults, 3 runs each. Runs of the same fault are not independent, so 83% has a wide interval (roughly 63 to 95%).
+- 12 held-out faults in two batches, 3 runs each. Runs of the same fault are not independent, so 83% (batch 1) and 75% (batch 2) both have wide intervals (roughly 63 to 95% and 43 to 95%).
 - I wrote both the faults and the taxonomy, so the test is not adversarial. Faults are single-cause; real incidents often have several.
 - The target is a three-service shop on a laptop, not a production system.
 - Evidence validity (do the cited tool outputs really support each claim) has not been hand-audited yet.
@@ -124,4 +136,4 @@ tests/            gateway, validator, approvals, injection, adapters, baselines,
 
 ## Status
 
-Done: simulator, live Docker stack, fault injector, live agent, evaluation harness. Next: a fresh held-out fault set (code-level faults such as N+1 queries and CPU hogs), a no-tools baseline on the live stack, a hand audit of cited evidence, then safety tests and a demo.
+Done: simulator, live Docker stack, fault injector, live agent, evaluation harness. Next: a no-tools baseline on the live stack, a hand audit of cited evidence, then safety tests and a demo.

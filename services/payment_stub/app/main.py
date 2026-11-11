@@ -46,6 +46,13 @@ async def set_behaviour(body: dict):
     return BEHAVIOUR
 
 
+@app.post("/partner/notify")
+async def partner_notify(body: dict):
+    """Partner webhook receiver: acknowledges after a short processing delay."""
+    await asyncio.sleep(0.2)
+    return {"ok": True}
+
+
 @app.post("/charge")
 async def charge(body: dict, x_api_key: str = Header()):
     if x_api_key != API_KEY:

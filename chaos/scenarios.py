@@ -12,7 +12,7 @@ import httpx
 
 from diag.sim.scenarios import SCENARIOS
 
-from . import deploy, heldout, load
+from . import codefaults, deploy, heldout, load
 from .util import (
     STUB,
     ChaosError,
@@ -154,6 +154,15 @@ SPECS: dict[int, Spec] = {s.id: s for s in [
     Spec(29, _noop, lambda _: None, set(), ["surge"], "healthy 5x traffic spike, nothing is broken"),
     Spec(30, _noop, lambda _: None, set(), [], "only background noise (404s, bad input)"),
     # ---- held-out (prompt never tuned on these) ----
+    Spec(3, codefaults.inj_n_plus_one, deploy.rollback, {"HighLatencyP95"}, ["orders_heavy"],
+         "real commit: /orders runs an items, product and payment query per order (about 100 queries a request)",
+         held_out=True),
+    Spec(9, codefaults.inj_cpu_hog, deploy.rollback, {"HighLatencyP95"}, ["checkout"],
+         "real commit: checkout runs a backtracking regex in worker processes and pins the CPU quota", held_out=True),
+    Spec(10, codefaults.inj_event_loop, deploy.rollback, {"HighLatencyP95"}, ["mixed"],
+         "real commit: checkout makes a synchronous HTTP call inside the async handler", held_out=True),
+    Spec(14, codefaults.inj_fd_leak, deploy.rollback, {"HighErrorRate"}, ["receipts_slow"],
+         "real commit: receipts keep a file handle open per request until the 1024 fd limit", held_out=True),
     Spec(5, heldout.inj_deadlock, lambda _: None, {"HighErrorRate", "HighLatencyP95"}, ["bundle"],
          "bundle-promo carts lock two SKUs in opposite orders", held_out=True),
     Spec(19, heldout.inj_cache_down, heldout.rev_cache_down, {"HighErrorRate", "ContainerDown"}, [],
